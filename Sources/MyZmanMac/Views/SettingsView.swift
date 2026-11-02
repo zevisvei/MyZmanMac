@@ -1,14 +1,18 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @ViewState private var tab: Int
+
+    init(initialTab: Int = 0) { _tab = ViewState(wrappedValue: initialTab) }
+
     var body: some View {
-        TabView {
-            GeneralSettings().tabItem { Label("כללי", systemImage: "gearshape") }
-            MenuBarSettings().tabItem { Label("שורת התפריטים", systemImage: "menubar.rectangle") }
-            LocationSettings().tabItem { Label("מיקום", systemImage: "mappin.and.ellipse") }
-            ZmanimSettings().tabItem { Label("זמנים", systemImage: "list.bullet") }
-            ReminderSettings().tabItem { Label("תזכורות", systemImage: "bell") }
-            CalendarSettings().tabItem { Label("לוח שנה", systemImage: "calendar") }
+        TabView(selection: $tab) {
+            GeneralSettings().tabItem { Label("כללי", systemImage: "gearshape") }.tag(0)
+            MenuBarSettings().tabItem { Label("שורת התפריטים", systemImage: "menubar.rectangle") }.tag(1)
+            LocationSettings().tabItem { Label("מיקום", systemImage: "mappin.and.ellipse") }.tag(2)
+            ZmanimSettings().tabItem { Label("זמנים", systemImage: "list.bullet") }.tag(3)
+            ReminderSettings().tabItem { Label("תזכורות", systemImage: "bell") }.tag(4)
+            CalendarSettings().tabItem { Label("לוח שנה", systemImage: "calendar") }.tag(5)
         }
         .frame(width: 620, height: 560)
         .activatingApp()
@@ -62,7 +66,9 @@ private struct GeneralSettings: View {
             }
             Section("ייצוא ל-Excel (CSV)") {
                 DatePicker("מתאריך", selection: $exportFrom, displayedComponents: .date)
+                    .environment(\.timeZone, model.tz)
                 DatePicker("עד תאריך", selection: $exportTo, displayedComponents: .date)
+                    .environment(\.timeZone, model.tz)
                 Button("ייצא…") { Exporter.exportCSV(from: exportFrom, to: exportTo, settings: model.settings) }
             }
             Section {
@@ -138,7 +144,8 @@ private struct LocationSettings: View {
     @ViewState private var locator = LocationService()
 
     private var results: [Location] {
-        let all = model.settings.customLocations + Location.builtIn
+        let all = model.settings.customLocations.sorted { $0.displayName < $1.displayName }
+            + Location.builtIn.sorted { $0.displayName < $1.displayName }
         guard !search.isEmpty else { return all }
         return all.filter { $0.nameHe.contains(search) || $0.nameEn.localizedCaseInsensitiveContains(search) }
     }
@@ -248,7 +255,7 @@ private struct ZmanimSettings: View {
                 HStack {
                     Button("הסר") { remove() }.disabled(selection == nil)
                     Spacer()
-                    Button("שחזר ברירת מחדל") { model.settings.zmanim = ZmanCatalog.defaults }
+                    Button("שחזר ברירת מחדל") { model.restoreDefaultZmanim() }
                 }
                 Text("גררו לשינוי הסדר, לחצו על שם לעריכה.").font(.caption).foregroundStyle(.secondary)
             }
@@ -263,10 +270,13 @@ private struct ZmanimSettings: View {
                             Text(def.en).font(.caption2).foregroundStyle(.secondary)
                         }
                         Spacer()
+                        let inList = model.settings.zmanim.contains { $0.defID == def.id }
                         Button { model.settings.zmanim.append(ZmanItem(name: def.he, defID: def.id)) } label: {
-                            Image(systemName: "plus.circle.fill")
+                            Image(systemName: inList ? "checkmark.circle.fill" : "plus.circle.fill")
+                                .foregroundStyle(inList ? Color.green : Color.accentColor)
                         }
                         .buttonStyle(.borderless)
+                        .help(inList ? "כבר ברשימה – לחיצה תוסיף עותק נוסף" : "הוסף לרשימה")
                     }
                     .help(def.heInfo + "\n\n" + def.enInfo)
                 }
@@ -287,44 +297,155 @@ private struct ZmanimSettings: View {
 
 private struct ReminderSettings: View {
     @EnvironmentObject var model: AppModel
-    @ViewState private var newZman: UUID?
-    @ViewState private var newMinutes = 10
+    @ViewState private var draft = Reminder(kind: .zman)
+    @ViewState private var editingID: UUID?
+    @ViewState private var time = Date()
+
+    private var timedZmanim: [ZmanItem] { model.settings.zmanim.filter { $0.def?.isDuration == false } }
 
     var body: some View {
+        let s = model.settings
         Form {
-            Section("תזכורות פעילות") {
-                if model.settings.reminders.isEmpty {
+            Section("התזכורות שלי") {
+                if s.reminders.isEmpty {
                     Text("אין תזכורות").foregroundStyle(.secondary)
                 }
                 ForEach($model.settings.reminders) { $r in
                     HStack {
                         Toggle("", isOn: $r.enabled).labelsHidden()
-                        Text(model.settings.zmanim.first { $0.id == r.zmanID }?.name ?? "?")
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(r.title(in: s))
+                            Text(r.summary(in: s, format: model.format)).font(.caption).foregroundStyle(.secondary)
+                        }
                         Spacer()
-                        Stepper("\(r.minutesBefore == 0 ? "בזמן" : "\(r.minutesBefore) דק׳ לפני")",
-                                value: $r.minutesBefore, in: 0...180, step: 5)
-                        Button { model.settings.reminders.removeAll { $0.id == r.id } } label: { Image(systemName: "trash") }
-                            .buttonStyle(.borderless)
+                        Button("ערוך") { edit(r) }.buttonStyle(.link)
+                        Button { delete(r.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
                     }
+                    .opacity(r.enabled ? 1 : 0.5)
                 }
             }
-            Section("הוספה") {
-                Picker("זמן", selection: $newZman) {
-                    Text("בחר…").tag(UUID?.none)
-                    ForEach(model.settings.zmanim.filter { $0.def?.isDuration == false }) { Text($0.name).tag(Optional($0.id)) }
+
+            Section(editingID == nil ? "תזכורת חדשה" : "עריכת תזכורת") {
+                Picker("סוג", selection: $draft.kind) {
+                    ForEach(Reminder.Kind.allCases) { Text($0.title).tag($0) }
                 }
-                Stepper("\(newMinutes) דקות לפני", value: $newMinutes, in: 0...180, step: 5)
-                Button("הוסף תזכורת") {
-                    if let newZman { model.settings.reminders.append(Reminder(zmanID: newZman, minutesBefore: newMinutes)) }
+                .pickerStyle(.segmented)
+
+                if draft.kind == .zman {
+                    Picker("זמן", selection: $draft.zmanID) {
+                        Text("בחר…").tag(UUID?.none)
+                        ForEach(timedZmanim) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                    Stepper(draft.minutesBefore == 0 ? "בזמן עצמו" : "\(draft.minutesBefore) דקות לפני",
+                            value: $draft.minutesBefore, in: 0...240, step: 5)
+                } else {
+                    DatePicker("שעה", selection: $time, displayedComponents: .hourAndMinute)
+                        .environment(\.timeZone, model.tz)
                 }
-                .disabled(newZman == nil)
+
+                Picker("חזרה", selection: $draft.repeatMode) {
+                    ForEach(Reminder.Repeat.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+
+                switch draft.repeatMode {
+                case .weekdays:
+                    HStack(spacing: 6) {
+                        ForEach(1...7, id: \.self) { d in
+                            let on = draft.weekdays.contains(d)
+                            Button(Reminder.weekdayLetters[d - 1]) {
+                                if on { draft.weekdays.removeAll { $0 == d } } else { draft.weekdays.append(d) }
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(on ? .accentColor : .secondary)
+                            .fontWeight(on ? .bold : .regular)
+                        }
+                    }
+                    HStack {
+                        Button("א׳–ה׳") { draft.weekdays = [1, 2, 3, 4, 5] }
+                        Button("א׳–ו׳") { draft.weekdays = [1, 2, 3, 4, 5, 6] }
+                        Button("שבת") { draft.weekdays = [7] }
+                    }
+                    .buttonStyle(.link).font(.caption)
+                case .once:
+                    LabeledContent("תאריך") {
+                        DateJumpButton(date: Binding(get: { draft.onceDate ?? Date() }, set: { draft.onceDate = $0 }))
+                    }
+                case .daily:
+                    EmptyView()
+                }
+
+                TextField("כותרת (לא חובה)", text: $draft.label)
+
+                HStack {
+                    if editingID != nil { Button("ביטול") { reset() } }
+                    Spacer()
+                    Button(editingID == nil ? "הוסף תזכורת" : "שמור שינויים", action: save)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!isValid)
+                }
             }
-            Section {
-                Text("התזכורות מוצגות כהתראות מערכת לפי המיקום הנבחר, ופועלות כשהאפליקציה רצה (מומלץ להפעיל עם הכניסה למחשב).")
+
+            Section("ההתראות הקרובות") {
+                let next = ReminderScheduler.plan(s, days: 14).prefix(8)
+                if next.isEmpty {
+                    Text("אין התראות בשבועיים הקרובים").foregroundStyle(.secondary)
+                }
+                ForEach(Array(next.enumerated()), id: \.offset) { _, p in
+                    HStack {
+                        Text(p.title)
+                        Spacer()
+                        Text(model.format.localizedDate(p.fire, template: "EEEdMMM") + " " + model.format.time(p.fire))
+                            .monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
+                }
+                Text("התזכורות מוצגות כהתראות מערכת לפי המיקום הנבחר. הן נקבעות לשבועיים קדימה ומתחדשות כל יום כשהאפליקציה רצה (מומלץ להשאיר את ההפעלה עם הכניסה למחשב).")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
+        .onAppear { reset() }
+    }
+
+    private var isValid: Bool {
+        switch (draft.kind, draft.repeatMode) {
+        case (.zman, _) where draft.zmanID == nil: false
+        case (_, .weekdays) where draft.weekdays.isEmpty: false
+        default: true
+        }
+    }
+
+    private func edit(_ r: Reminder) {
+        draft = r
+        editingID = r.id
+        time = ZmanEngine.gregorian(model.tz).date(bySettingHour: r.hour, minute: r.minute, second: 0, of: Date()) ?? Date()
+    }
+
+    private func reset() {
+        draft = Reminder(kind: .zman)
+        draft.onceDate = Date()
+        editingID = nil
+        time = ZmanEngine.gregorian(model.tz).date(bySettingHour: 8, minute: 0, second: 0, of: Date()) ?? Date()
+    }
+
+    private func save() {
+        var r = draft
+        let c = ZmanEngine.gregorian(model.tz).dateComponents([.hour, .minute], from: time)
+        r.hour = c.hour ?? 8
+        r.minute = c.minute ?? 0
+        if r.repeatMode == .once, r.onceDate == nil { r.onceDate = Date() }
+        if let id = editingID, let i = model.settings.reminders.firstIndex(where: { $0.id == id }) {
+            model.settings.reminders[i] = r
+        } else {
+            model.settings.reminders.append(r)
+        }
+        reset()
+    }
+
+    private func delete(_ id: UUID) {
+        model.settings.reminders.removeAll { $0.id == id }
+        if editingID == id { reset() }
     }
 }
 

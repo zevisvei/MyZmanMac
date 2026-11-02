@@ -15,6 +15,8 @@ final class CalendarSync: ObservableObject {
 
     let store = EKEventStore()
     private let calendarIDKey = "calendarSync.calendarID"
+    /// True only if the app itself created the dedicated calendar (never for an adopted one).
+    private let createdKey = "calendarSync.createdByApp"
 
     /// Bumped whenever the calendar database changes, so views reload events.
     @Published private(set) var version = 0
@@ -89,7 +91,14 @@ final class CalendarSync: ObservableObject {
         cal.cgColor = NSColor.systemOrange.cgColor
         try store.saveCalendar(cal, commit: true)
         UserDefaults.standard.set(cal.calendarIdentifier, forKey: calendarIDKey)
+        UserDefaults.standard.set(true, forKey: createdKey)
         return cal
+    }
+
+    /// EventKit treats all-day dates in the Mac's own zone; convert a day in the location's zone to that.
+    static func allDayDate(_ day: Date, in tz: TimeZone) -> Date {
+        let c = ZmanEngine.gregorian(tz).dateComponents([.year, .month, .day], from: day)
+        return Calendar.current.date(from: c) ?? day
     }
 
     private func target(_ options: CalendarSyncOptions) throws -> EKCalendar {
@@ -122,8 +131,9 @@ final class CalendarSync: ObservableObject {
             e.title = event.title
             e.notes = (event.notes.map { $0 + "\n" } ?? "") + Self.syncMarker
             e.isAllDay = event.allDay
-            e.startDate = event.start
-            e.endDate = event.allDay ? event.start : event.start.addingTimeInterval(60)
+            let start = event.allDay ? Self.allDayDate(event.start, in: settings.location.timeZone) : event.start
+            e.startDate = start
+            e.endDate = event.allDay ? start : start.addingTimeInterval(60)
             e.timeZone = event.allDay ? nil : settings.location.timeZone
             e.availability = .free
             if !event.allDay, let m = options.alertMinutes {
@@ -136,24 +146,35 @@ final class CalendarSync: ObservableObject {
         return count
     }
 
-    /// Removes everything the sync wrote (and the dedicated calendar, if the app created one).
+    /// Removes everything the sync wrote. Only marked events are deleted; the dedicated calendar itself
+    /// is removed only if the app created it and nothing else is left in it.
     func removeSynced(options: CalendarSyncOptions) async throws {
         guard try await requestAccess() else { throw Failure.denied }
-        if options.targetCalendarID == nil {
-            if let id = UserDefaults.standard.string(forKey: calendarIDKey), let cal = store.calendar(withIdentifier: id) {
-                try store.removeCalendar(cal, commit: true)
-            }
-            UserDefaults.standard.removeObject(forKey: calendarIDKey)
-            return
+        let cal: EKCalendar?
+        if let id = options.targetCalendarID {
+            cal = store.calendar(withIdentifier: id)
+        } else {
+            cal = UserDefaults.standard.string(forKey: calendarIDKey).flatMap { store.calendar(withIdentifier: $0) }
         }
-        guard let cal = store.calendar(withIdentifier: options.targetCalendarID!) else { return }
+        guard let cal else { return }
         let now = Date()
-        let events = store.events(matching: store.predicateForEvents(withStart: now.addingTimeInterval(-90 * 86_400),
-                                                                     end: now.addingTimeInterval(400 * 86_400), calendars: [cal]))
-        for e in events where e.notes?.hasSuffix(Self.syncMarker) == true {
-            try store.remove(e, span: .thisEvent, commit: false)
+        let range = store.predicateForEvents(withStart: now.addingTimeInterval(-400 * 86_400),
+                                             end: now.addingTimeInterval(400 * 86_400), calendars: [cal])
+        let events = store.events(matching: range)
+        var remaining = 0
+        for e in events {
+            if e.notes?.hasSuffix(Self.syncMarker) == true {
+                try store.remove(e, span: .thisEvent, commit: false)
+            } else {
+                remaining += 1
+            }
         }
         try store.commit()
+        if options.targetCalendarID == nil, remaining == 0, UserDefaults.standard.bool(forKey: createdKey) {
+            try store.removeCalendar(cal, commit: true)
+            UserDefaults.standard.removeObject(forKey: calendarIDKey)
+            UserDefaults.standard.removeObject(forKey: createdKey)
+        }
     }
 
     // MARK: - Write: user-added events
@@ -169,8 +190,7 @@ final class CalendarSync: ObservableObject {
 
     func add(_ new: NewEvent, calendarID: String?, timeZone: TimeZone) async throws {
         guard try await requestAccess() else { throw Failure.denied }
-        let cal = try calendarID.flatMap { store.calendar(withIdentifier: $0) } ?? target(CalendarSyncOptions())
-        try save(new, in: cal, timeZone: timeZone, commit: true)
+        try save(new, in: try calendar(for: calendarID), timeZone: timeZone, commit: true)
     }
 
     /// Adds the same event on a Hebrew date for `years` consecutive years
@@ -180,7 +200,7 @@ final class CalendarSync: ObservableObject {
     func addHebrewRecurring(_ new: NewEvent, hebrewMonth: Int, hebrewDay: Int, fromYear: Int, years: Int,
                             calendarID: String?, timeZone: TimeZone) async throws -> [Date] {
         guard try await requestAccess() else { throw Failure.denied }
-        let cal = try calendarID.flatMap { store.calendar(withIdentifier: $0) } ?? target(CalendarSyncOptions())
+        let cal = try calendar(for: calendarID)
         var hebrew = Calendar(identifier: .hebrew)
         hebrew.timeZone = timeZone
         let clock = ZmanEngine.gregorian(timeZone).dateComponents([.hour, .minute], from: new.start)
@@ -197,14 +217,21 @@ final class CalendarSync: ObservableObject {
         return written
     }
 
+    private func calendar(for id: String?) throws -> EKCalendar {
+        guard let id else { return try target(CalendarSyncOptions()) }
+        guard let cal = store.calendar(withIdentifier: id) else { throw Failure.calendarGone }
+        return cal
+    }
+
     private func save(_ new: NewEvent, in cal: EKCalendar, timeZone: TimeZone, commit: Bool) throws {
         let e = EKEvent(eventStore: store)
         e.calendar = cal
         e.title = new.title
         e.notes = new.notes
         e.isAllDay = new.allDay
-        e.startDate = new.start
-        e.endDate = new.allDay ? new.start : new.start.addingTimeInterval(Double(new.durationMinutes * 60))
+        let start = new.allDay ? Self.allDayDate(new.start, in: timeZone) : new.start
+        e.startDate = start
+        e.endDate = new.allDay ? start : start.addingTimeInterval(Double(new.durationMinutes * 60))
         e.timeZone = new.allDay ? nil : timeZone
         if let m = new.alarmMinutes { e.addAlarm(EKAlarm(relativeOffset: -Double(m * 60))) }
         try store.save(e, span: .thisEvent, commit: commit)
@@ -215,6 +242,7 @@ final class CalendarSync: ObservableObject {
     struct DayEvent: Identifiable, Hashable {
         let id: String
         let eventID: String
+        let itemID: String
         let canDelete: Bool
         let title: String
         let start: Date
@@ -236,7 +264,8 @@ final class CalendarSync: ObservableObject {
         return store.events(matching: store.predicateForEvents(withStart: start, end: end, calendars: cals))
             .filter { $0.notes?.hasSuffix(Self.syncMarker) != true }
             .map { DayEvent(id: $0.calendarItemIdentifier + "\($0.startDate.timeIntervalSince1970)",
-                            eventID: $0.eventIdentifier ?? "", canDelete: $0.calendar.allowsContentModifications,
+                            eventID: $0.eventIdentifier ?? "", itemID: $0.calendarItemIdentifier,
+                            canDelete: $0.calendar.allowsContentModifications,
                             title: $0.title ?? "",
                             start: $0.startDate, allDay: $0.isAllDay, color: $0.calendar.color ?? .systemBlue,
                             calendar: $0.calendar.title) }
@@ -252,7 +281,10 @@ final class CalendarSync: ObservableObject {
 
     /// Deletes one occurrence of an event (used from the popover's context menu).
     func delete(_ e: DayEvent) throws {
-        guard let ev = store.event(withIdentifier: e.eventID) else { return }
+        // event(withIdentifier:) returns a recurring series' first occurrence, so find this exact one.
+        let pred = store.predicateForEvents(withStart: e.start.addingTimeInterval(-1), end: e.start.addingTimeInterval(86_400), calendars: nil)
+        guard let ev = store.events(matching: pred).first(where: { $0.calendarItemIdentifier == e.itemID && $0.startDate == e.start })
+        else { return }
         try store.remove(ev, span: .thisEvent, commit: true)
     }
 

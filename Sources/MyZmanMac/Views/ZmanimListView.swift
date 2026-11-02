@@ -52,6 +52,8 @@ private struct ZmanRow: View {
     let now: Date
     let day: DayState
     let isNext: Bool
+    @ViewState private var hover = false
+    @ViewState private var expanded = false
 
     enum DayState { case past, today, future }
 
@@ -64,40 +66,59 @@ private struct ZmanRow: View {
         case .today: z.time.map { $0 < now } ?? false
         }
 
+        VStack(alignment: .leading, spacing: 4) {
         HStack {
-            Group {
-                if isDuration { Image(systemName: "hourglass") }
-                else if isNext { Image(systemName: "arrowtriangle.left.fill") }
-                else if past { Image(systemName: "checkmark.circle") }
-                else { Image(systemName: "circle") }
+                Group {
+                    if isDuration { Image(systemName: "hourglass") }
+                    else if isNext { Image(systemName: "arrowtriangle.left.fill") }
+                    else if past { Image(systemName: "checkmark.circle") }
+                    else { Image(systemName: "circle") }
+                }
+                .font(.caption2)
+                .frame(width: 12)
+                Text(z.item.name)
+                    .lineLimit(1)
+                if s.menuBar.zmanMode == .pinned && s.menuBar.pinnedZman == z.id {
+                    Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary)
+                }
+                if s.reminders.contains(where: { $0.zmanID == z.id && $0.enabled }) {
+                    Image(systemName: "bell.fill").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if isNext, let t = z.time {
+                    Text("\u{200E}-\(ZmanFormat.countdown(t.timeIntervalSince(now), showSeconds: true))")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Text(isDuration ? ZmanFormat.duration(z.duration, seconds: s.showSeconds) : model.format.time(z.time))
+                    .monospacedDigit()
+                    .fontWeight(isNext ? .bold : .regular)
             }
-            .font(.caption2)
-            .frame(width: 12)
-            Text(z.item.name)
-                .lineLimit(1)
-            if s.menuBar.zmanMode == .pinned && s.menuBar.pinnedZman == z.id {
-                Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary)
+            if expanded, let def = z.item.def {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(def.he).font(.caption.bold())
+                    Text(def.heInfo).font(.caption).fixedSize(horizontal: false, vertical: true)
+                    if let t = z.time, !isDuration {
+                        let diff = t.timeIntervalSince(now)
+                        Text(diff >= 0 ? "בעוד \(ZmanFormat.countdown(diff, showSeconds: false))" : "לפני \(ZmanFormat.countdown(-diff, showSeconds: false))")
+                            .font(.caption2.monospacedDigit())
+                    }
+                }
+                .foregroundStyle(.secondary)
+                .padding(.leading, 20)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            if s.reminders.contains(where: { $0.zmanID == z.id && $0.enabled }) {
-                Image(systemName: "bell.fill").font(.caption2).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if isNext, let t = z.time {
-                Text("\u{200E}-\(ZmanFormat.countdown(t.timeIntervalSince(now), showSeconds: true))")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Text(isDuration ? ZmanFormat.duration(z.duration, seconds: s.showSeconds) : model.format.time(z.time))
-                .monospacedDigit()
-                .fontWeight(isNext ? .bold : .regular)
         }
         .foregroundStyle(color(past: past, isDuration: isDuration))
         .opacity(past && !isDuration ? 0.8 : 1)
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 6).fill(isNext ? Color.accentColor.opacity(0.18) : .clear))
+        .background(RoundedRectangle(cornerRadius: 6).fill(
+            isNext ? Color.accentColor.opacity(0.18) : hover ? Color.primary.opacity(0.06) : .clear))
         .contentShape(Rectangle())
-        .help(z.item.def.map { "\($0.he)\n\n\($0.heInfo)" } ?? "")
+        .onHover { hover = $0 }
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() } }
+        .help("לחיצה – הסבר על הזמן · לחיצה ימנית – אפשרויות")
         .contextMenu { menu(isDuration: isDuration) }
     }
 
@@ -119,7 +140,7 @@ private struct ZmanRow: View {
             Menu("תזכורת") {
                 ForEach([0, 5, 10, 15, 30, 60], id: \.self) { m in
                     Button(m == 0 ? "בזמן" : "\(m) דקות לפני") {
-                        model.settings.reminders.removeAll { $0.zmanID == z.id }
+                        model.settings.reminders.removeAll { $0.zmanID == z.id && $0.kind == .zman && $0.repeatMode == .daily }
                         model.settings.reminders.append(Reminder(zmanID: z.id, minutesBefore: m))
                     }
                 }

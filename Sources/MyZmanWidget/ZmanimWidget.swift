@@ -1,14 +1,20 @@
 import WidgetKit
 import SwiftUI
+import KosherSwift
 
-/// Desktop / Notification Center widget. It calculates zmanim itself (same model code as the app)
-/// from the settings file the app writes, and schedules a timeline entry at every zman.
+/// Desktop / Notification Center widgets. They calculate zmanim themselves (same model code as the app)
+/// from the settings file the app writes, and schedule a timeline entry at every zman.
 @main
 struct ZmanimWidgets: WidgetBundle {
     var body: some Widget {
-        ZmanimWidget()
+        NextZmanWidget()
+        ZmanimListWidget()
+        HebrewDateWidget()
+        ShabbatWidget()
     }
 }
+
+// MARK: - Timeline
 
 struct ZmanimEntry: TimelineEntry {
     let date: Date
@@ -39,81 +45,231 @@ struct ZmanimProvider: TimelineProvider {
     }
 }
 
-struct ZmanimWidget: Widget {
-    var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "ZmanimWidget", provider: ZmanimProvider()) { entry in
-            ZmanimWidgetView(entry: entry)
-                .environment(\.layoutDirection, .rightToLeft)
-                .containerBackground(.background, for: .widget)
-        }
-        .configurationDisplayName("זמנים")
-        .description("התאריך העברי והזמן הבא, עם ספירה לאחור.")
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
-    }
-}
+/// Values every widget view needs for an entry.
+struct WidgetDay {
+    let s: AppSettings
+    let now: Date
+    let fmt: ZmanFormat
+    let cal: Calendar
+    let info: DayInfo
+    let today: [ComputedZman]
+    let upcoming: [ComputedZman]
 
-struct ZmanimWidgetView: View {
-    let entry: ZmanimEntry
-    @Environment(\.widgetFamily) private var family
-
-    private var s: AppSettings { entry.settings }
-
-    var body: some View {
-        let now = entry.date
-        let fmt = ZmanFormat(s)
-        let cal = ZmanEngine.gregorian(s.location.timeZone)
+    init(_ entry: ZmanimEntry) {
+        s = entry.settings
+        now = entry.date
+        fmt = ZmanFormat(s)
+        cal = ZmanEngine.gregorian(s.location.timeZone)
+        let s = s, now = now, cal = cal
         let hebrewDay: Date = {
             guard s.hebrewDateChangesAtSunset, let ss = ZmanEngine.sunset(on: now, settings: s), now >= ss else { return now }
             return cal.date(byAdding: .day, value: 1, to: now)!
         }()
-        let info = ZmanEngine.dayInfo(for: hebrewDay, settings: s)
-        let today = ZmanEngine.zmanim(on: now, settings: s).filter { $0.item.def?.isDuration == false }
-        let upcoming = (today + ZmanEngine.zmanim(on: cal.date(byAdding: .day, value: 1, to: now)!, settings: s))
+        info = ZmanEngine.dayInfo(for: hebrewDay, settings: s)
+        today = ZmanEngine.zmanim(on: now, settings: s).filter { $0.item.def?.isDuration == false }
+        upcoming = (today + ZmanEngine.zmanim(on: cal.date(byAdding: .day, value: 1, to: now)!, settings: s)
+            .filter { $0.item.def?.isDuration == false })
             .filter { ($0.time ?? .distantPast) > now }
-        let next = upcoming.first
+            .sorted { $0.time! < $1.time! }
+    }
+}
 
+private extension View {
+    func widgetStyle() -> some View {
+        environment(\.layoutDirection, .rightToLeft)
+            .containerBackground(.background, for: .widget)
+    }
+}
+
+// MARK: - 1. Next zman
+
+struct NextZmanWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "NextZman", provider: ZmanimProvider()) { NextZmanView(day: WidgetDay($0)).widgetStyle() }
+            .configurationDisplayName("הזמן הבא")
+            .description("הזמן הבא ברשימה עם ספירה לאחור.")
+            .supportedFamilies([.systemSmall, .systemMedium])
+    }
+}
+
+struct NextZmanView: View {
+    let day: WidgetDay
+    @Environment(\.widgetFamily) private var family
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
-                Text(info.hebrewDayMonth).font(.headline)
+                Text(day.info.hebrewDayMonth).font(.headline)
                 Spacer()
-                Text(s.location.displayName).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                Text(day.s.location.displayName).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
-            if family != .systemSmall {
-                Text(([info.parsha] + info.events).filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Spacer(minLength: 2)
+            if let next = day.upcoming.first, let t = next.time {
+                Text(next.item.name).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                Text(day.fmt.time(t)).font(.system(size: 30, weight: .bold, design: .rounded)).monospacedDigit()
+                Text(t, style: .timer)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.orange)
             }
-
-            if let next, let t = next.time {
-                Spacer(minLength: 2)
-                Text(next.item.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                HStack(alignment: .firstTextBaseline) {
-                    Text(fmt.time(t)).font(.system(size: 24, weight: .bold, design: .rounded)).monospacedDigit()
-                    Spacer()
-                    Text(t, style: .timer)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.orange)
-                        .multilineTextAlignment(.trailing)
-                }
-            }
-
-            if family != .systemSmall {
-                let rows = family == .systemLarge ? today : Array(upcoming.dropFirst().prefix(3))
+            if family == .systemMedium {
                 Divider()
-                ForEach(rows) { z in
-                    let past = (z.time ?? .distantFuture) < now
+                ForEach(day.upcoming.dropFirst().prefix(2)) { z in
                     HStack {
                         Text(z.item.name).lineLimit(1)
                         Spacer()
-                        Text(fmt.time(z.time)).monospacedDigit()
+                        Text(day.fmt.time(z.time)).monospacedDigit()
                     }
                     .font(.caption)
-                    .foregroundStyle(past ? .secondary : .primary)
                 }
+            }
+        }
+    }
+}
+
+// MARK: - 2. Today's list
+
+struct ZmanimListWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "ZmanimList", provider: ZmanimProvider()) { ZmanimListView(day: WidgetDay($0)).widgetStyle() }
+            .configurationDisplayName("זמני היום")
+            .description("רשימת הזמנים של היום – מה שעבר באפור, הזמן הבא מודגש.")
+            .supportedFamilies([.systemMedium, .systemLarge])
+    }
+}
+
+struct ZmanimListView: View {
+    let day: WidgetDay
+    @Environment(\.widgetFamily) private var family
+
+    var body: some View {
+        let nextID = day.upcoming.first?.id
+        let rows: [ComputedZman] = {
+            guard family == .systemMedium else { return day.today }
+            // Medium: a window of 5 around the next zman.
+            let idx = day.today.firstIndex { $0.id == nextID } ?? max(0, day.today.count - 5)
+            let start = max(0, min(idx - 1, day.today.count - 5))
+            return Array(day.today[start..<min(day.today.count, start + 5)])
+        }()
+
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(day.info.hebrewDate).font(.headline)
+                Spacer()
+                Text(day.s.location.displayName).font(.caption2).foregroundStyle(.secondary)
+            }
+            if family == .systemLarge, !day.info.parsha.isEmpty {
+                Text(([day.info.parsha] + day.info.events).joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Divider()
+            ForEach(rows) { z in
+                let past = (z.time ?? .distantFuture) < day.now
+                let isNext = z.id == nextID
+                HStack {
+                    Text(z.item.name).lineLimit(1)
+                    Spacer()
+                    Text(day.fmt.time(z.time)).monospacedDigit()
+                }
+                .font(.system(size: 12, weight: isNext ? .bold : .regular))
+                .foregroundStyle(past ? AnyShapeStyle(.secondary) : isNext ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
             }
             Spacer(minLength: 0)
             if family == .systemLarge {
                 Text(Disclaimer.short).font(.system(size: 9)).foregroundStyle(.tertiary)
             }
+        }
+    }
+}
+
+// MARK: - 3. Hebrew date (calendar page)
+
+struct HebrewDateWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "HebrewDate", provider: ZmanimProvider()) { HebrewDateView(day: WidgetDay($0)).widgetStyle() }
+            .configurationDisplayName("תאריך עברי")
+            .description("דף לוח: התאריך העברי, הפרשה, החגים והדף היומי.")
+            .supportedFamilies([.systemSmall, .systemMedium])
+    }
+}
+
+struct HebrewDateView: View {
+    let day: WidgetDay
+    @Environment(\.widgetFamily) private var family
+
+    var body: some View {
+        let parts = day.info.hebrewDate.split(separator: " ")
+        VStack(spacing: 2) {
+            Text(day.info.weekday).font(.caption.bold()).foregroundStyle(.white)
+                .frame(maxWidth: .infinity).padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: 6).fill(day.info.isShabbosOrYomTov ? Color.orange : Color.accentColor))
+            Text(day.info.hebrewDayNumber).font(.system(size: family == .systemSmall ? 40 : 46, weight: .bold, design: .rounded))
+            Text(parts.dropFirst().joined(separator: " ")).font(.subheadline)
+            Text(day.fmt.localizedDate(day.now, template: "dMMMyyyy")).font(.caption2).foregroundStyle(.secondary)
+            if family == .systemMedium {
+                Divider()
+                Text(([day.info.parsha] + day.info.events).filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.caption).lineLimit(2).multilineTextAlignment(.center)
+                if !day.info.dafYomi.isEmpty {
+                    Text("דף יומי: \(day.info.dafYomi)").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 4. Shabbos times
+
+struct ShabbatWidget: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "Shabbat", provider: ZmanimProvider()) { ShabbatView(day: WidgetDay($0)).widgetStyle() }
+            .configurationDisplayName("זמני שבת")
+            .description("הדלקת נרות וצאת השבת הקרובה, והפרשה.")
+            .supportedFamilies([.systemSmall, .systemMedium])
+    }
+}
+
+struct ShabbatView: View {
+    let day: WidgetDay
+    @Environment(\.widgetFamily) private var family
+
+    var body: some View {
+        let cal = day.cal
+        // The coming Friday (today if it's Friday; Shabbos itself counts the Friday before).
+        let weekday = cal.component(.weekday, from: day.now)
+        let toFriday = weekday == 7 ? -1 : (6 - weekday + 7) % 7
+        let friday = cal.date(byAdding: .day, value: toFriday, to: day.now)!
+        let shabbos = cal.date(byAdding: .day, value: 1, to: friday)!
+        // Customary candle-lighting offsets: Jerusalem 40, Haifa 30, else 18 minutes before sunset.
+        let name = day.s.location.nameEn.lowercased()
+        let offset: Double = name.contains("jerusalem") ? 40 : name.contains("haifa") ? 30 : 18
+        let candles = ZmanEngine.calendar(for: friday, settings: day.s).myzCandleLighting(offset)
+        let czcShabbos = ZmanEngine.calendar(for: shabbos, settings: day.s)
+        let havdalah = czcShabbos.getTzaisGeonim8Point5Degrees()
+        let rt = czcShabbos.getTzais72()
+        let info = ZmanEngine.dayInfo(for: shabbos, settings: day.s)
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("שבת").font(.headline)
+                if !info.parsha.isEmpty { Text(info.parsha).font(.subheadline).foregroundStyle(.secondary).lineLimit(1) }
+                Spacer()
+            }
+            Text(day.s.location.displayName).font(.caption2).foregroundStyle(.secondary)
+            Spacer(minLength: 2)
+            row("🕯️ הדלקת נרות", day.fmt.time(candles))
+            row("✨ צאת השבת", day.fmt.time(havdalah))
+            if family == .systemMedium {
+                row("ר״ת", day.fmt.time(rt))
+                Text("נרות \(Int(offset)) דק׳ לפני השקיעה · צאת השבת 8.5°").font(.system(size: 9)).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func row(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title).font(.caption)
+            Spacer()
+            Text(value).font(.system(.body, design: .rounded).bold()).monospacedDigit()
         }
     }
 }

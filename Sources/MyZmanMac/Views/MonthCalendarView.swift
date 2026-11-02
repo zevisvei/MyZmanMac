@@ -136,8 +136,18 @@ struct MonthCalendarView: View {
         }
     }
 
+    private static var eventsCache: (key: String, entries: [Entry])?
+
     /// Holidays and fasts in the coming year (skips daily omer counts and repeated days).
     private func upcomingEvents(from date: Date) -> [Entry] {
+        let key = model.dayKey(date) + "|\(model.settings.location.id)|\(model.settings.inIsrael)|\(model.settings.useModernHolidays)"
+        if let c = Self.eventsCache, c.key == key { return c.entries }
+        let entries = computeUpcomingEvents(from: date)
+        Self.eventsCache = (key, entries)
+        return entries
+    }
+
+    private func computeUpcomingEvents(from date: Date) -> [Entry] {
         let cal = ZmanEngine.gregorian(model.tz)
         var result: [Entry] = []
         var last = ""

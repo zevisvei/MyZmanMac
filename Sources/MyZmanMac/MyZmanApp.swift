@@ -85,10 +85,13 @@ enum DebugDump {
             if let d = f.date(from: CommandLine.arguments[i + 1]) { AppModel.shared.selectedDate = d }
         }
         DispatchQueue.main.async {
-            let root = PopoverView(initialTab: tab.flatMap(PopoverTab.init(rawValue:)) ?? .zmanim)
-                .environmentObject(AppModel.shared)
-                .environment(\.layoutDirection, .rightToLeft)
-            let w = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 370, height: 600),
+            let root: AnyView = tab?.hasPrefix("settings") == true
+                ? AnyView(SettingsView(initialTab: Int(tab!.dropFirst(8)) ?? 0)
+                    .environmentObject(AppModel.shared).environment(\.layoutDirection, .rightToLeft))
+                : AnyView(PopoverView(initialTab: tab.flatMap(PopoverTab.init(rawValue:)) ?? .zmanim)
+                    .environmentObject(AppModel.shared).environment(\.layoutDirection, .rightToLeft))
+            let big = tab?.hasPrefix("settings") == true
+            let w = NSWindow(contentRect: NSRect(x: 200, y: 200, width: big ? 620 : 370, height: big ? 560 : 600),
                              styleMask: [.titled], backing: .buffered, defer: false)
             w.contentView = NSHostingView(rootView: root)
             if CommandLine.arguments.contains("--dark") { w.appearance = NSAppearance(named: .darkAqua) }
@@ -115,6 +118,16 @@ enum DebugDump {
         let f = ZmanFormat(s)
         for z in ZmanEngine.zmanim(on: day, settings: s) {
             print("  \(z.item.name): \(z.item.def?.isDuration == true ? ZmanFormat.duration(z.duration) : f.time(z.time))")
+        }
+        if args.contains("--plan") {
+            var t = Reminder(kind: .time); t.hour = 7; t.minute = 30; t.repeatMode = .weekdays; t.weekdays = [1, 3]; t.label = "שיעור"
+            var o = Reminder(kind: .time); o.hour = 20; o.repeatMode = .once; o.onceDate = day.addingTimeInterval(3 * 86400); o.label = "פעם אחת"
+            let z = Reminder(zmanID: s.zmanim.first { $0.defID == "GetSunset" }!.id, minutesBefore: 15)
+            s.reminders = [t, o, z]
+            let f = ZmanFormat(s)
+            for p in ReminderScheduler.plan(s, from: day, days: 7) {
+                print("  ⏰ \(f.localizedDate(p.fire, template: "EEEdMMM")) \(f.time(p.fire)) | \(p.title) | \(p.body)")
+            }
         }
         if args.contains("--all") {
             let czc = ZmanEngine.calendar(for: day, settings: s)

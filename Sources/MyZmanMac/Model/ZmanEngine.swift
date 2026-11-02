@@ -99,7 +99,7 @@ enum ZmanEngine {
         let f = formatter
         let dayNum = f.formatHebrewNumber(number: jc.getJewishDayOfMonth())
         let month = f.formatMonth(jewishCalendar: jc)
-        let year = f.formatHebrewNumber(number: jc.getJewishYear() % 1000)
+        let year = f.formatHebrewNumber(number: jc.getJewishYear() % 1000 == 0 ? jc.getJewishYear() : jc.getJewishYear() % 1000)
 
         var events: [String] = []
         for s in [f.formatYomTov(jewishCalendar: jc), f.formatRoshChodesh(jewishCalendar: jc),
@@ -108,7 +108,9 @@ enum ZmanEngine {
         }
         if jc.getDayOfWeek() == 7, jc.isShabbosMevorchim() { events.append("שבת מברכים") }
 
-        let parsha = f.formatParsha(parsha: jc.getUpcomingParshah())
+        // On Shabbos itself use that day's parsha; getUpcomingParshah() would give next week's.
+        let today = jc.getParshah()
+        let parsha = f.formatParsha(parsha: jc.getDayOfWeek() == 7 && today != .NONE ? today : jc.getUpcomingParshah())
         let daf = DafYomi.format(day, calendar: gregorian(settings.location.timeZone))
 
         let weekday = gregorian(settings.location.timeZone)

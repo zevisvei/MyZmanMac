@@ -10,6 +10,7 @@ final class AppModel: ObservableObject {
     @Published var settings: AppSettings {
         didSet {
             guard settings != oldValue else { return }
+            if settings.zmanim != oldValue.zmanim, pruneOrphans() { return }  // didSet runs again with the pruned settings
             settings.save()
             invalidate()
             WidgetCenter.shared.reloadAllTimelines()
@@ -19,16 +20,29 @@ final class AppModel: ObservableObject {
                 || settings.useUSNO != oldValue.useUSNO {
                 ReminderScheduler.shared.reschedule(settings)
             }
-            if settings.calendarSync != oldValue.calendarSync || settings.location != oldValue.location {
+            let old = oldValue.calendarSync, new = settings.calendarSync
+            if old.enabled && (!new.enabled || old.targetCalendarID != new.targetCalendarID) {
+                // Don't leave stale synced zmanim in a calendar we no longer write to.
+                Task { try? await CalendarSync.shared.removeSynced(options: old) }
+            }
+            if new != old || settings.location != oldValue.location || settings.zmanim != oldValue.zmanim {
                 syncCalendarIfEnabled()
             }
         }
     }
 
-    /// The day shown in the popover (independent of "today").
-    @Published var selectedDate = Date()
+    /// The day shown in the popover (independent of "today"). Always kept at noon in the
+    /// location's time zone, so it stays the same calendar day whatever zone it's read in.
+    @Published var selectedDate = Date() {
+        didSet {
+            let n = ZmanEngine.noon(of: selectedDate, in: tz)
+            if n != selectedDate { selectedDate = n }
+        }
+    }
     @Published private(set) var menuBarTitle = ""
-    @Published private(set) var now = Date()
+    /// Not published: views that need a ticking clock use TimelineView, so the popover
+    /// doesn't re-render every second.
+    private(set) var now = Date()
     /// Set to ask the calendar card to open its "new event" form.
     @Published var newEventRequest = 0
 
@@ -46,7 +60,12 @@ final class AppModel: ObservableObject {
         RunLoop.main.add(t, forMode: .common)
         timer = t
         NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.invalidate() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.infoCache.removeAll()
+                self.invalidate()
+                ReminderScheduler.shared.reschedule(self.settings)
+            }
         }
         ReminderScheduler.shared.reschedule(settings)
         enableLaunchAtLoginOnFirstRun()
@@ -109,10 +128,12 @@ final class AppModel: ObservableObject {
     private func tick() {
         let date = Date()
         now = date
-        let key = dayKey(date)
+        let key = tz.identifier + "|" + dayKey(date)
         if key != lastDayKey {
             // Day rolled over: keep the popover on "today" if it was showing yesterday's today.
-            if dayKey(selectedDate) == lastDayKey { selectedDate = date }
+            // (A location change alters the key too, but isn't a rollover.)
+            let sameZone = lastDayKey.hasPrefix(tz.identifier + "|")
+            if sameZone, tz.identifier + "|" + dayKey(selectedDate) == lastDayKey { selectedDate = date }
             lastDayKey = key
             todayCache = nil
             ReminderScheduler.shared.reschedule(settings)
@@ -164,7 +185,7 @@ final class AppModel: ObservableObject {
     private var infoCache: [String: DayInfo] = [:]
 
     func dayInfo(_ d: Date) -> DayInfo {
-        let key = dayKey(d) + "|\(settings.inIsrael)|\(settings.useModernHolidays)"
+        let key = dayKey(d) + "|\(settings.location.id)|\(settings.inIsrael)|\(settings.useModernHolidays)"
         if let i = infoCache[key] { return i }
         if infoCache.count > 3000 { infoCache.removeAll() }
         let i = ZmanEngine.dayInfo(for: d, settings: settings)
@@ -191,16 +212,54 @@ final class AppModel: ObservableObject {
         return parts.joined(separator: " · ")
     }
 
+    private var syncWork: DispatchWorkItem?
+
+    /// Debounced, so flipping several options in a row rewrites the calendar once.
     func syncCalendarIfEnabled() {
+        syncWork?.cancel()
         guard settings.calendarSync.enabled else { return }
-        let s = settings
-        Task { try? await CalendarSync.shared.sync(s, options: s.calendarSync) }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let s = self.settings
+            Task { try? await CalendarSync.shared.sync(s, options: s.calendarSync) }
+        }
+        syncWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+    }
+
+    /// Drops reminders / pins / calendar choices that point at zmanim no longer in the list.
+    /// Returns true if it changed the settings.
+    private func pruneOrphans() -> Bool {
+        let ids = Set(settings.zmanim.map(\.id))
+        var s = settings
+        s.reminders.removeAll { $0.kind == .zman && !($0.zmanID.map(ids.contains) ?? false) }
+        if let p = s.menuBar.pinnedZman, !ids.contains(p) { s.menuBar.pinnedZman = nil }
+        s.calendarSync.zmanIDs.removeAll { !ids.contains($0) }
+        guard s != settings else { return false }
+        settings = s
+        return true
+    }
+
+    /// Restores MyZman's default list, keeping the identity of zmanim that are already in it
+    /// (so their reminders and pins survive).
+    func restoreDefaultZmanim() {
+        let existing = Dictionary(settings.zmanim.map { ($0.defID, $0.id) }, uniquingKeysWith: { a, _ in a })
+        settings.zmanim = ZmanCatalog.defaults.map { d in
+            var item = d
+            if let id = existing[d.defID] { item.id = id }
+            return item
+        }
     }
 
     // MARK: - Mutations
 
     func select(location: Location) {
+        // Keep the same calendar day selected in the new location.
+        let c = ZmanEngine.gregorian(tz).dateComponents([.year, .month, .day], from: selectedDate)
         settings.location = location
         if settings.inIsraelOverride != nil { settings.inIsraelOverride = nil }
+        if let d = ZmanEngine.gregorian(tz).date(from: DateComponents(year: c.year, month: c.month, day: c.day, hour: 12)) {
+            selectedDate = d
+        }
     }
 }

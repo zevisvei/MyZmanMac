@@ -28,7 +28,7 @@ struct Location: Codable, Hashable, Identifiable {
     var elevation: Double
     var timeZoneID: String
 
-    var id: String { "\(nameEn)|\(latitude)|\(longitude)" }
+    var id: String { "\(region.rawValue)|\(nameEn)|\(latitude)|\(longitude)" }
 
     var displayName: String { nameHe.isEmpty ? nameEn : nameHe }
 

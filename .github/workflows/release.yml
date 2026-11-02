@@ -35,6 +35,7 @@ jobs:
           cd build
           ditto -c -k --sequesterRsrc --keepParent MyZman.app MyZman.zip
           mkdir -p dmg && cp -R MyZman.app dmg/ && ln -s /Applications dmg/Applications
+          cp ../scripts/enable-widget.sh dmg/enable-widget.sh
           hdiutil create -volname "MyZman" -srcfolder dmg -ov -format UDZO MyZman.dmg
           shasum -a 256 MyZman.zip MyZman.dmg > SHA256SUMS.txt
 
@@ -53,6 +54,7 @@ jobs:
             build/MyZman.zip
             build/MyZman.dmg
             build/SHA256SUMS.txt
+            scripts/enable-widget.sh
           generate_release_notes: true
           body: |
             ## התקנה
@@ -60,5 +62,13 @@ jobs:
             2. האפליקציה לא חתומה בחשבון מפתח של Apple, ולכן בפתיחה הראשונה: לחיצה ימנית על האפליקציה ← „פתח”.
                לחלופין, במסוף: `xattr -dr com.apple.quarantine /Applications/MyZman.app`
             3. האייקון יופיע בשורת התפריטים העליונה.
+
+            ## ווידג'טים
+            יש ארבעה ווידג'טים: הזמן הבא, זמני היום, תאריך עברי וזמני שבת.
+            macOS מציג ווידג'טים רק של אפליקציות שחתומות בתעודת מפתח. כדי לחתום בחינם:
+            1. התקינו את Xcode מה-App Store, ובתוכו Settings ← Accounts ← „+” ← התחברו עם Apple ID.
+            2. בחרו בחשבון ← Manage Certificates ← „+” ← Apple Development.
+            3. הריצו במסוף: `zsh enable-widget.sh` (הקובץ נמצא ב-DMG ובנכסי הגרסה).
+            4. לחיצה ימנית על שולחן העבודה ← „עריכת ווידג'טים” ← חפשו „זמנים”.
 
             דורש macOS 14 ומעלה. ⚠︎ אין לסמוך על הזמנים להלכה למעשה – יש לבדוק מול לוח מוסמך.

@@ -93,7 +93,8 @@ PLIST
 
 # Ad-hoc by default. Set SIGN_IDENTITY (e.g. "Apple Development: you@example.com") to sign with a
 # real certificate – macOS only lists the widget in the widget gallery for certificate-signed apps.
-IDENTITY="${SIGN_IDENTITY:--}"
+IDENTITY="${SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | grep -m1 -o '"Apple Development: [^"]*"' | tr -d '"' || true)}"
+IDENTITY="${IDENTITY:--}"
 echo "› Signing (${IDENTITY})"
 codesign --force --options runtime --sign "$IDENTITY" --entitlements build/widget.entitlements "$WEX"
 codesign --force --options runtime --sign "$IDENTITY" "$APP"

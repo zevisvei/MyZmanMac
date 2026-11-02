@@ -4,7 +4,7 @@
 extension Location {
     static let builtIn: [Location] = [
         Location(nameHe: "אלכסנדריה", nameEn: "Alexandria", region: .other, latitude: 31.2, longitude: 29.95, elevation: 0.0, timeZoneID: "Africa/Cairo"),
-        Location(nameHe: "אלג'יריה", nameEn: "Algeria", region: .other, latitude: 36.81, longitude: -2.99, elevation: 0.0, timeZoneID: "Europe/Paris"),
+        Location(nameHe: "אלג'יריה", nameEn: "Algeria", region: .other, latitude: 36.75, longitude: 3.06, elevation: 0.0, timeZoneID: "Europe/Paris"),
         Location(nameHe: "אמסטרדם", nameEn: "Amsterdam", region: .europe, latitude: 52.37, longitude: 4.89, elevation: 0.0, timeZoneID: "Europe/Amsterdam"),
         Location(nameHe: "אנטוורפן", nameEn: "Antwerp", region: .europe, latitude: 51.22, longitude: 4.41, elevation: 0.0, timeZoneID: "Europe/Brussels"),
         Location(nameHe: "מודיעין עילית", nameEn: "Modiin ilit", region: .israel, latitude: 31.933, longitude: 35.041, elevation: 0.0, timeZoneID: "Asia/Jerusalem"),

@@ -121,23 +121,28 @@ struct DayHeader: View {
         VStack(spacing: 6) {
             HStack {
                 Button { shift(-1) } label: { Image(systemName: "chevron.right") }
-                    .buttonStyle(.borderless).help("יום קודם")
+                    .buttonStyle(.borderless).help("יום קודם (→)")
+                    .keyboardShortcut(.rightArrow, modifiers: [])
                 Spacer()
                 VStack(spacing: 2) {
                     Text(info.hebrewDate)
                         .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .contentTransition(.opacity)
                     Text(model.format.localizedDate(date, template: "EEEEdMMMMyyyy"))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button { shift(1) } label: { Image(systemName: "chevron.left") }
-                    .buttonStyle(.borderless).help("יום הבא")
+                    .buttonStyle(.borderless).help("יום הבא (←)")
+                    .keyboardShortcut(.leftArrow, modifiers: [])
             }
+            .scrollStep { shift($0) }
+            .help("גלגלת – מעבר בין ימים")
 
             if isToday, model.settings.hebrewDateChangesAtSunset,
-               !cal.isDate(model.currentHebrewDay(at: model.now), inSameDayAs: date) {
-                Text("אחרי השקיעה – התאריך העברי: \(model.dayInfo(model.currentHebrewDay(at: model.now)).hebrewDayMonth)")
+               !cal.isDate(model.currentHebrewDay(at: Date()), inSameDayAs: date) {
+                Text("אחרי השקיעה – התאריך העברי: \(model.dayInfo(model.currentHebrewDay(at: Date())).hebrewDayMonth)")
                     .font(.caption).foregroundStyle(.orange)
             }
 
@@ -150,8 +155,9 @@ struct DayHeader: View {
                 }
                 Spacer()
                 if !isToday {
-                    Button("חזרה להיום") { model.selectedDate = Date() }
+                    Button("חזרה להיום") { withAnimation(.easeInOut(duration: 0.15)) { model.selectedDate = Date() } }
                         .buttonStyle(.link).font(.caption)
+                        .keyboardShortcut("t", modifiers: .command)
                 }
                 DateJumpButton(date: $model.selectedDate)
                     .controlSize(.small)
@@ -160,7 +166,9 @@ struct DayHeader: View {
     }
 
     private func shift(_ days: Int) {
-        model.selectedDate = ZmanEngine.gregorian(model.tz).date(byAdding: .day, value: days, to: model.selectedDate)!
+        withAnimation(.easeInOut(duration: 0.15)) {
+            model.selectedDate = ZmanEngine.gregorian(model.tz).date(byAdding: .day, value: days, to: model.selectedDate)!
+        }
     }
 }
 

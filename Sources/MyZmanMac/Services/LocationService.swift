@@ -16,6 +16,7 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
 
     private let manager = CLLocationManager()
     private var continuation: CheckedContinuation<CLLocation, Error>?
+    private var request = 0
 
     override init() {
         super.init()
@@ -26,6 +27,13 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     func currentLocation() async throws -> Location {
         let fix = try await withCheckedThrowingContinuation { (c: CheckedContinuation<CLLocation, Error>) in
             continuation = c
+            request += 1
+            let current = request
+            // Don't hang forever if the permission prompt is dismissed or no fix arrives.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+                guard let self, self.request == current else { return }
+                self.finish(.failure(Failure.unavailable))
+            }
             switch manager.authorizationStatus {
             case .notDetermined: manager.requestWhenInUseAuthorization()
             case .denied, .restricted: finish(.failure(Failure.denied))
@@ -50,7 +58,7 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         MainActor.assumeIsolated {
             guard continuation != nil else { return }
             switch manager.authorizationStatus {
-            case .authorizedAlways, .authorized: manager.requestLocation()
+            case .authorizedAlways, .authorized, .authorizedWhenInUse: manager.requestLocation()
             case .denied, .restricted: finish(.failure(Failure.denied))
             default: break
             }

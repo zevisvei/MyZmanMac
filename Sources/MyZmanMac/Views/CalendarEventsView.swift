@@ -10,7 +10,7 @@ struct DayEventsSection: View {
 
     var body: some View {
         let opts = model.settings.calendarSync
-        if opts.showCalendarEvents {
+        if opts.showCalendarEvents || adding {
             let _ = sync.version
             let cal = ZmanEngine.gregorian(model.tz)
             let start = cal.startOfDay(for: date)
