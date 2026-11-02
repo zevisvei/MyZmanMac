@@ -41,10 +41,22 @@ cat > "$ENT" <<ENTS
 </plist>
 ENTS
 
+APPENT=$(mktemp -t app).entitlements
+cat > "$APPENT" <<ENTS
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.personal-information.calendars</key><true/>
+  <key>com.apple.security.personal-information.location</key><true/>
+</dict>
+</plist>
+ENTS
+
 pkill -x MyZman 2>/dev/null || true
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 codesign --force --options runtime --sign "$IDENTITY" --entitlements "$ENT" "$WEX"
-codesign --force --options runtime --sign "$IDENTITY" "$APP"
+codesign --force --options runtime --sign "$IDENTITY" --entitlements "$APPENT" "$APP"
 codesign --verify --deep --strict "$APP"
 
 # Make the system pick up the newly signed widget.

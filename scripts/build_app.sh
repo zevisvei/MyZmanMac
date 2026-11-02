@@ -95,9 +95,20 @@ PLIST
 # real certificate – macOS only lists the widget in the widget gallery for certificate-signed apps.
 IDENTITY="${SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | grep -m1 -o '"Apple Development: [^"]*"' | tr -d '"' || true)}"
 IDENTITY="${IDENTITY:--}"
+# Hardened runtime needs explicit entitlements for Calendar and Location access.
+cat > build/app.entitlements <<ENT
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.personal-information.calendars</key><true/>
+  <key>com.apple.security.personal-information.location</key><true/>
+</dict>
+</plist>
+ENT
 echo "› Signing (${IDENTITY})"
 codesign --force --options runtime --sign "$IDENTITY" --entitlements build/widget.entitlements "$WEX"
-codesign --force --options runtime --sign "$IDENTITY" "$APP"
+codesign --force --options runtime --sign "$IDENTITY" --entitlements build/app.entitlements "$APP"
 
 if [[ "${1:-}" == "--install" ]]; then
   pkill -x MyZman 2>/dev/null || true
