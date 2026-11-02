@@ -107,8 +107,10 @@ cat > build/app.entitlements <<ENT
 </plist>
 ENT
 echo "› Signing (${IDENTITY})"
-codesign --force --options runtime --sign "$IDENTITY" --entitlements build/widget.entitlements "$WEX"
-codesign --force --options runtime --sign "$IDENTITY" --entitlements build/app.entitlements "$APP"
+# A secure timestamp is required for notarization (and unavailable for ad-hoc signing).
+TS=(); [[ "$IDENTITY" != "-" ]] && TS=(--timestamp)
+codesign --force --options runtime "${TS[@]}" --sign "$IDENTITY" --entitlements build/widget.entitlements "$WEX"
+codesign --force --options runtime "${TS[@]}" --sign "$IDENTITY" --entitlements build/app.entitlements "$APP"
 
 if [[ "${1:-}" == "--install" ]]; then
   pkill -x MyZman 2>/dev/null || true

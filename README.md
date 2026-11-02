@@ -29,11 +29,7 @@
 
 הגרסה האחרונה נמצאת ב-[Releases](https://github.com/zevisvei/MyZmanMac/releases/latest). הורידו את `MyZman.dmg` וגררו את MyZman ל-Applications. נדרש macOS 14 ומעלה.
 
-האפליקציה לא חתומה בחשבון מפתח של Apple. בפתיחה הראשונה לחצו על האפליקציה לחיצה ימנית ← „פתח”, או הריצו במסוף:
-
-```sh
-xattr -dr com.apple.quarantine /Applications/MyZman.app
-```
+בפתיחה הראשונה macOS עשוי להזהיר ש„המפתח לא מזוהה”. לחצו על האפליקציה לחיצה ימנית ← „פתח”. הסבר מלא, כולל הפעלת הווידג'טים, נמצא בפרק [חתימה, ווידג'טים ואזהרת „מפתח לא מזוהה”](#חתימה-ווידגטים-ואזהרת-מפתח-לא-מזוהה) למטה.
 
 ## בנייה מהקוד
 
@@ -44,17 +40,49 @@ scripts/build_app.sh            # בונה את build/MyZman.app
 scripts/build_app.sh --install  # מתקין ל-/Applications ומפעיל
 ```
 
-## ווידג'טים
+## חתימה, ווידג'טים ואזהרת „מפתח לא מזוהה”
 
-macOS מציג בגלריית הווידג'טים רק ווידג'טים של אפליקציות שחתומות בתעודת מפתח של Apple. אפשר לקבל תעודה כזו בחינם:
+הגרסאות ב-GitHub חתומות בחתימה מקומית בלבד (ad-hoc). זה מספיק כדי שהאפליקציה תרוץ, אבל יש לזה שתי השלכות:
 
-1. מתקינים את Xcode מה-App Store ופותחים אותו פעם אחת.
+1. **אזהרה בפתיחה הראשונה.** macOS מזהיר ש„המפתח לא מזוהה”. הפתרון: לחיצה ימנית על האפליקציה ← „פתח”, או `xattr -dr com.apple.quarantine /Applications/MyZman.app`.
+2. **הווידג'טים לא מופיעים בגלריה.** macOS מציג בגלריה רק ווידג'טים של אפליקציות שחתומות בתעודת מפתח של Apple.
+
+### אפשרות א': כל משתמש חותם לעצמו (חינם)
+
+התעודה החינמית קשורה ל-Apple ID של המשתמש, ולכן היא עוזרת רק במחשבים שלו. כל משתמש שרוצה ווידג'טים עושה את זה פעם אחת:
+
+1. מתקינים את [Xcode](https://apps.apple.com/app/id497799835) מה-App Store ופותחים אותו פעם אחת.
 2. ב-Xcode: ‏Settings ← Accounts ← „+” ← מתחברים עם ה-Apple ID.
-3. בוחרים בחשבון ← Manage Certificates… ← „+” ← Apple Development.
-4. מריצים `scripts/enable-widget.sh`. מי שהוריד את הגרסה יכול להריץ `zsh enable-widget.sh` מתוך ה-DMG.
+3. בוחרים בחשבון ← Manage Certificates… ← „+” ← **Apple Development**.
+4. מריצים `zsh enable-widget.sh`. הקובץ נמצא ב-DMG ובנכסי כל גרסה, ובקוד הוא נמצא בנתיב `scripts/enable-widget.sh`.
 5. לחיצה ימנית על שולחן העבודה ← „עריכת ווידג'טים” ← מחפשים „זמנים”.
 
-אחרי שהתעודה קיימת, `scripts/build_app.sh` משתמש בה אוטומטית.
+**אפשר לחתום אחרי הקימפול.** הסקריפט חותם מחדש את האפליקציה המותקנת (‎/Applications/MyZman.app) עם התעודה שלכם, ולא צריך לבנות אותה מחדש. אחרי החתימה מחדש ייתכן שתתבקשו לאשר שוב גישה ליומן ולמיקום.
+
+מי שבונה מהקוד: אחרי שהתעודה קיימת, `scripts/build_app.sh` משתמש בה אוטומטית. אפשר גם לבחור תעודה ידנית:
+
+```sh
+SIGN_IDENTITY="Apple Development: name@example.com (TEAMID)" scripts/build_app.sh --install
+```
+
+### אפשרות ב': חתימה ואימות לכולם (Apple Developer Program, ‏$99 לשנה)
+
+עם תעודת **Developer ID Application**, ה-CI חותם כל גרסה ומאמת אותה אצל Apple (notarization). בגרסאות כאלה, אצל כל המשתמשים:
+
+- אין אזהרה בפתיחה.
+- הווידג'טים מופיעים בלי שום פעולה נוספת.
+
+ה-workflow כבר מוכן לזה, וצריך רק להוסיף ב-GitHub את הסודות האלה (Settings ← Secrets and variables ← Actions):
+
+| סוד | תוכן |
+|---|---|
+| `MACOS_CERTIFICATE_P12` | תעודת Developer ID Application שיוצאה כקובץ ‎.p12, בקידוד base64 (`base64 -i cert.p12 \| pbcopy`) |
+| `MACOS_CERTIFICATE_PASSWORD` | הסיסמה שנבחרה בייצוא ה-‎.p12 |
+| `APPLE_ID` | כתובת ה-Apple ID של חשבון המפתח |
+| `APPLE_TEAM_ID` | מזהה הצוות (Team ID) מ-developer.apple.com |
+| `APPLE_APP_PASSWORD` | סיסמה ייעודית לאפליקציה מ-appleid.apple.com |
+
+כשהסודות לא מוגדרים, ה-CI ממשיך לבנות ולפרסם גרסאות עם חתימה מקומית, כמו היום.
 
 לבדיקת חישובים מול לוח, אפשר להדפיס את הזמנים למסוף:
 
