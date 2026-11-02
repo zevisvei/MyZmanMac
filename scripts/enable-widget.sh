@@ -63,7 +63,7 @@ cat > "$ENT/app.plist" <<ENTS
 ENTS
 
 pkill -x MyZman 2>/dev/null || true
-xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+xattr -d com.apple.quarantine "$APP" 2>/dev/null || true
 codesign --force --options runtime --sign "$IDENTITY" --entitlements "$ENT/widget.plist" "$WEX"
 codesign --force --options runtime --sign "$IDENTITY" --entitlements "$ENT/app.plist" "$APP"
 rm -rf "$ENT"
