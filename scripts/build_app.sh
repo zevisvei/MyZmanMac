@@ -63,6 +63,7 @@ if [[ ! -f build/AppIcon.icns ]]; then
   iconutil -c icns build/AppIcon.iconset -o build/AppIcon.icns
 fi
 cp build/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp scripts/enable-widget.sh "$APP/Contents/Resources/enable-widget.sh"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

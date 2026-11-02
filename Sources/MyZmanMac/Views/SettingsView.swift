@@ -56,6 +56,7 @@ private struct GeneralSettings: View {
                 Text("כברירת מחדל החישוב לפי גובה פני הים ואלגוריתם NOAA, כמו ב-MyZman.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            WidgetSection()
             Section("מערכת") {
                 Toggle("הפעל עם הכניסה למחשב", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) {
@@ -557,6 +558,63 @@ private struct CalendarSettings: View {
                 status = n > 0 ? "נכתבו \(n) אירועים ליומן." : "בוצע."
             } catch { status = error.localizedDescription }
             busy = false
+        }
+    }
+}
+
+// MARK: - Widgets
+
+private struct WidgetSection: View {
+    @ViewState private var status: WidgetSigner.Status?
+    @ViewState private var error: String?
+    @ViewState private var working = false
+
+    var body: some View {
+        Section("ווידג'טים") {
+            switch status {
+            case .none:
+                ProgressView().controlSize(.small)
+            case .enabled(let authority)?:
+                Label("הווידג'טים פעילים", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+                Text("האפליקציה חתומה בתעודה: \(authority). להוספה: לחיצה ימנית על שולחן העבודה ← „עריכת ווידג'טים” ← חפשו „זמנים”.")
+                    .font(.caption).foregroundStyle(.secondary)
+            case .certificateAvailable?:
+                Text("נמצאה תעודת מפתח במחשב. לחיצה אחת תחתום את האפליקציה ותפעיל את הווידג'טים. האפליקציה תיסגר ותיפתח מחדש.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button(working ? "חותם…" : "הפעלת ווידג'טים") { enable() }.disabled(working)
+            case .noCertificate?:
+                Text("macOS מציג ווידג'טים רק של אפליקציות שחתומות בתעודת מפתח. אפשר לקבל תעודה בחינם, פעם אחת:")
+                    .font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("1. מתקינים את Xcode מה-App Store ופותחים אותו פעם אחת.")
+                    Text("2. ‏Settings ← Accounts ← „+” ← מתחברים עם ה-Apple ID.")
+                    Text("3. בוחרים בחשבון ← Manage Certificates ← „+” ← Apple Development.")
+                    Text("4. חוזרים לכאן ולוחצים „בדוק שוב”.")
+                }
+                .font(.caption)
+                HStack {
+                    Button("פתח את Xcode ב-App Store") { NSWorkspace.shared.open(WidgetSigner.xcodeURL) }
+                    Button("בדוק שוב") { refresh() }
+                }
+            }
+            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+        }
+        .onAppear { refresh() }
+    }
+
+    private func refresh() {
+        status = nil
+        DispatchQueue.global().async {
+            let s = WidgetSigner.status()
+            DispatchQueue.main.async { status = s }
+        }
+    }
+
+    private func enable() {
+        working = true
+        do { try WidgetSigner.enable() } catch {
+            self.error = error.localizedDescription
+            working = false
         }
     }
 }
