@@ -1,0 +1,1 @@
+../MyZmanMac/Data/Location+Data.swift

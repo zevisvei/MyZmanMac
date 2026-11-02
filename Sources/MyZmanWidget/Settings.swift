@@ -1,0 +1,1 @@
+../MyZmanMac/Model/Settings.swift

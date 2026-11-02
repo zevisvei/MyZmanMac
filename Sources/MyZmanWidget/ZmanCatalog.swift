@@ -1,0 +1,1 @@
+../MyZmanMac/Model/ZmanCatalog.swift

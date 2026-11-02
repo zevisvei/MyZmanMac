@@ -1,0 +1,63 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app || true
+
+      - name: Build app (universal)
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then export VERSION="${GITHUB_REF_NAME#v}"; fi
+          scripts/build_app.sh
+
+      - name: Check calculations
+        run: |
+          .build/apple/Products/Release/MyZmanMac --dump 2026-11-02 Jerusalem | tee dump.txt
+          grep -q "כ״ב חשון תשפ״ז" dump.txt
+          grep -q "בכורות מ״ה" dump.txt
+
+      - name: Package
+        run: |
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent MyZman.app MyZman.zip
+          hdiutil create -volname "MyZman" -srcfolder MyZman.app -ov -format UDZO MyZman.dmg
+          shasum -a 256 MyZman.zip MyZman.dmg > SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MyZman
+          path: |
+            build/MyZman.zip
+            build/MyZman.dmg
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/MyZman.zip
+            build/MyZman.dmg
+            build/SHA256SUMS.txt
+          generate_release_notes: true
+          body: |
+            ## התקנה
+            1. הורידו את `MyZman.dmg` (או `MyZman.zip`) וגררו את MyZman ל-Applications.
+            2. האפליקציה לא חתומה בחשבון מפתח של Apple, ולכן בפתיחה הראשונה: לחיצה ימנית על האפליקציה ← „פתח”.
+               לחלופין, במסוף: `xattr -dr com.apple.quarantine /Applications/MyZman.app`
+            3. האייקון יופיע בשורת התפריטים העליונה.
+
+            דורש macOS 14 ומעלה. ⚠︎ אין לסמוך על הזמנים להלכה למעשה – יש לבדוק מול לוח מוסמך.
