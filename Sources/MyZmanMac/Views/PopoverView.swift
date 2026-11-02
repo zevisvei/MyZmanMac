@@ -44,6 +44,8 @@ struct PopoverView: View {
         }
         .padding(12)
         .frame(width: 370, height: 600)
+        // Opaque, so the window behind the popover doesn't wash out the colors.
+        .background(Color(nsColor: .windowBackgroundColor))
         // Bring the (menu-bar-only) app forward so controls render active, in the accent color.
         .onAppear { NSApp.activate(ignoringOtherApps: true) }
     }

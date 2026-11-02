@@ -29,7 +29,12 @@ struct DayEventsSection: View {
                     }
                 }
                 if !sync.hasAccess {
-                    Button("אשר גישה ליומן") { Task { try? await sync.requestAccess() } }.buttonStyle(.link)
+                    Button("אשר גישה ליומן") {
+                        Task {
+                            _ = try? await sync.requestAccess()
+                            StatusItem.reopenPopover()
+                        }
+                    }.buttonStyle(.link)
                 } else if events.isEmpty && !adding {
                     Text("אין אירועים").font(.caption).foregroundStyle(.secondary)
                 }

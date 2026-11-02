@@ -18,7 +18,6 @@ struct ZmanimListView: View {
                 Text(dayDiff == -1 ? "אתמול" : dayDiff == 1 ? "מחר"
                      : dayDiff < 0 ? "לפני \(-dayDiff) ימים" : "בעוד \(dayDiff) ימים")
                 Spacer()
-                Button("חזרה להיום") { model.selectedDate = Date() }.buttonStyle(.link)
             }
             .font(.caption)
             .foregroundStyle(dayDiff < 0 ? Color.secondary : Color.accentColor)
@@ -29,13 +28,14 @@ struct ZmanimListView: View {
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 let now = ctx.date
                 let nextID = isToday ? model.nextZmanID(at: now) : nil
-                LazyVStack(spacing: 2) {
+                VStack(spacing: 2) {
                     ForEach(zmanim) { z in
                         ZmanRow(z: z, now: now, day: dayState, isNext: z.id == nextID)
                     }
                 }
             }
         }
+        .id(model.dayKey(date))
         if s.zmanim.isEmpty {
             Text("הרשימה ריקה – הוסיפו זמנים בהגדרות").foregroundStyle(.secondary)
         }

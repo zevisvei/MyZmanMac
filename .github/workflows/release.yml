@@ -34,7 +34,8 @@ jobs:
         run: |
           cd build
           ditto -c -k --sequesterRsrc --keepParent MyZman.app MyZman.zip
-          hdiutil create -volname "MyZman" -srcfolder MyZman.app -ov -format UDZO MyZman.dmg
+          mkdir -p dmg && cp -R MyZman.app dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname "MyZman" -srcfolder dmg -ov -format UDZO MyZman.dmg
           shasum -a 256 MyZman.zip MyZman.dmg > SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4

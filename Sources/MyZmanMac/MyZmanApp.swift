@@ -52,6 +52,22 @@ enum LoginItem {
     }
 }
 
+enum StatusItem {
+    /// Re-opens the menu bar popover, e.g. after a system permission prompt took focus and closed it.
+    @MainActor static func reopenPopover() {
+        func button(in view: NSView?) -> NSStatusBarButton? {
+            guard let view else { return nil }
+            if let b = view as? NSStatusBarButton { return b }
+            for v in view.subviews { if let b = button(in: v) { return b } }
+            return nil
+        }
+        let window = NSApp.windows.first { $0.className.contains("NSStatusBarWindow") && $0.frame.origin.y >= 0 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            button(in: window?.contentView)?.performClick(nil)
+        }
+    }
+}
+
 extension View {
     /// Brings an agent (menu-bar-only) app's window to the front.
     func activatingApp() -> some View {
