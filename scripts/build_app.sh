@@ -34,6 +34,10 @@ cat > "$WEX/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>MyZmanWidget</string>
   <key>CFBundleDisplayName</key><string>זמנים</string>
   <key>CFBundleIdentifier</key><string>com.myzman.mac.widget</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleSupportedPlatforms</key><array><string>MacOSX</string></array>
+  <key>CFBundleDevelopmentRegion</key><string>he</string>
+  <key>DTPlatformName</key><string>macosx</string>
   <key>CFBundleExecutable</key><string>MyZmanWidget</string>
   <key>CFBundlePackageType</key><string>XPC!</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
@@ -92,10 +96,19 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc by default. Set SIGN_IDENTITY (e.g. "Apple Development: you@example.com") to sign with a
-# real certificate – macOS only lists the widget in the widget gallery for certificate-signed apps.
-IDENTITY="${SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | grep -m1 -o '"Apple Development: [^"]*"' | tr -d '"' || true)}"
-IDENTITY="${IDENTITY:--}"
+# Signing identity: $SIGN_IDENTITY, else the project's release certificate, an Apple Development
+# certificate or a local self-signed one (see enable-widget.sh), else ad-hoc. Any certificate works
+# (even an untrusted self-signed one); macOS just won't list widgets of ad-hoc signed apps.
+pick_identity() {
+  local ids m
+  ids=$(security find-identity -p codesigning 2>/dev/null)
+  for n in "MyZman Release Signing" "Apple Development: " "MyZman Local Signing"; do
+    m=$(print -r -- "$ids" | grep -m1 -o "\"${n}[^\"]*\"" | tr -d '"' || true)
+    [[ -n "$m" ]] && { print -r -- "$m"; return; }
+  done
+  print -- "-"
+}
+IDENTITY="${SIGN_IDENTITY:-$(pick_identity)}"
 # Hardened runtime needs explicit entitlements for Calendar and Location access.
 cat > build/app.entitlements <<ENT
 <?xml version="1.0" encoding="UTF-8"?>

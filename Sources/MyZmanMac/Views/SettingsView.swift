@@ -578,24 +578,10 @@ private struct WidgetSection: View {
                 Label("הווידג'טים פעילים", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
                 Text("האפליקציה חתומה בתעודה: \(authority). להוספה: לחיצה ימנית על שולחן העבודה ← „עריכת ווידג'טים” ← חפשו „זמנים”.")
                     .font(.caption).foregroundStyle(.secondary)
-            case .certificateAvailable?:
-                Text("נמצאה תעודת מפתח במחשב. לחיצה אחת תחתום את האפליקציה ותפעיל את הווידג'טים. האפליקציה תיסגר ותיפתח מחדש.")
+            case .adHoc?:
+                Text("העותק הזה חתום בחתימה מקומית בלבד, ולכן macOS לא מציג את הווידג'טים שלו. לחיצה אחת תיצור תעודת חתימה מקומית (בלי Xcode ובלי Apple ID), תחתום את האפליקציה ותפתח אותה מחדש.")
                     .font(.caption).foregroundStyle(.secondary)
                 Button(working ? "חותם…" : "הפעלת ווידג'טים") { enable() }.disabled(working)
-            case .noCertificate?:
-                Text("macOS מציג ווידג'טים רק של אפליקציות שחתומות בתעודת מפתח. אפשר לקבל תעודה בחינם, פעם אחת:")
-                    .font(.caption).foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("1. מתקינים את Xcode מה-App Store ופותחים אותו פעם אחת.")
-                    Text("2. ‏Settings ← Accounts ← „+” ← מתחברים עם ה-Apple ID.")
-                    Text("3. בוחרים בחשבון ← Manage Certificates ← „+” ← Apple Development.")
-                    Text("4. חוזרים לכאן ולוחצים „בדוק שוב”.")
-                }
-                .font(.caption)
-                HStack {
-                    Button("פתח את Xcode ב-App Store") { NSWorkspace.shared.open(WidgetSigner.xcodeURL) }
-                    Button("בדוק שוב") { refresh() }
-                }
             }
             if let error { Text(error).font(.caption).foregroundStyle(.red) }
         }

@@ -1,35 +1,46 @@
 #!/bin/zsh
-# Re-signs the installed MyZman.app with your own free "Apple Development" certificate,
-# so macOS lists its widgets in the widget gallery (it hides widgets of ad-hoc signed apps).
+# Makes MyZman's widgets appear in the widget gallery for an app that was signed ad-hoc
+# (e.g. built from source without a certificate). Official releases are already signed and
+# don't need this.
 #
-# One-time setup (free):
-#   1. Install Xcode from the App Store and open it once.
-#   2. Xcode ▸ Settings ▸ Accounts ▸ "+" ▸ sign in with your Apple ID.
-#   3. Select the account ▸ "Manage Certificates…" ▸ "+" ▸ "Apple Development".
-# Then run:  zsh enable-widget.sh   (or: scripts/enable-widget.sh)
+# macOS lists widgets only for apps with a certificate-based signature. Any certificate works,
+# even a self-signed, untrusted one – so this creates a local one if needed (no Xcode, no Apple ID)
+# and re-signs the installed app with it.
+#
+# Usage: zsh enable-widget.sh [path/to/MyZman.app]
 set -euo pipefail
 
 APP="${1:-/Applications/MyZman.app}"
 WEX="$APP/Contents/PlugIns/MyZmanWidget.appex"
 [[ -d "$WEX" ]] || { echo "✗ לא נמצא $APP – התקינו את MyZman קודם."; exit 1; }
 
-IDENTITY="${SIGN_IDENTITY:-$(security find-identity -v -p codesigning | grep -m1 -o '"Apple Development: [^"]*"' | tr -d '"' || true)}"
-if [[ -z "$IDENTITY" ]]; then
-  cat <<'MSG'
-✗ לא נמצאה תעודת "Apple Development" במחשב.
+pick_identity() {
+  local ids m
+  ids=$(security find-identity -p codesigning 2>/dev/null)
+  for n in "MyZman Release Signing" "Apple Development: " "MyZman Local Signing"; do
+    m=$(print -r -- "$ids" | grep -m1 -o "\"${n}[^\"]*\"" | tr -d '"' || true)
+    [[ -n "$m" ]] && { print -r -- "$m"; return; }
+  done
+}
 
-כדי ליצור אחת בחינם:
-  1. התקינו את Xcode מה-App Store ופתחו אותו פעם אחת.
-  2. Xcode ← Settings ← Accounts ← "+" ← התחברו עם ה-Apple ID שלכם.
-  3. בחרו בחשבון ← "Manage Certificates…" ← "+" ← "Apple Development".
-ואז הריצו את הסקריפט הזה שוב.
-MSG
-  exit 1
+IDENTITY="${SIGN_IDENTITY:-$(pick_identity)}"
+if [[ -z "$IDENTITY" ]]; then
+  echo "› יוצר תעודת חתימה מקומית (פעם אחת)…"
+  TMP=$(mktemp -d)
+  printf '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=MyZman Local Signing\n[ext]\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' > "$TMP/cs.cnf"
+  openssl req -x509 -newkey rsa:2048 -keyout "$TMP/key.pem" -out "$TMP/cert.pem" -days 7300 -nodes -config "$TMP/cs.cnf" 2>/dev/null
+  PW=$(openssl rand -hex 12)
+  LEGACY=(); openssl version | grep -q "^OpenSSL 3" && LEGACY=(-legacy)
+  openssl pkcs12 -export "${LEGACY[@]}" -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -out "$TMP/id.p12" \
+    -passout pass:"$PW" -name "MyZman Local Signing"
+  security import "$TMP/id.p12" -k "$HOME/Library/Keychains/login.keychain-db" -P "$PW" -T /usr/bin/codesign -A >/dev/null
+  rm -rf "$TMP"
+  IDENTITY="MyZman Local Signing"
 fi
 
 echo "› חותם עם: $IDENTITY"
-ENT=$(mktemp -t widget).entitlements
-cat > "$ENT" <<ENTS
+ENT=$(mktemp -d)
+cat > "$ENT/widget.plist" <<ENTS
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -40,9 +51,7 @@ cat > "$ENT" <<ENTS
 </dict>
 </plist>
 ENTS
-
-APPENT=$(mktemp -t app).entitlements
-cat > "$APPENT" <<ENTS
+cat > "$ENT/app.plist" <<ENTS
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -55,9 +64,9 @@ ENTS
 
 pkill -x MyZman 2>/dev/null || true
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
-codesign --force --options runtime --sign "$IDENTITY" --entitlements "$ENT" "$WEX"
-codesign --force --options runtime --sign "$IDENTITY" --entitlements "$APPENT" "$APP"
-codesign --verify --deep --strict "$APP"
+codesign --force --options runtime --sign "$IDENTITY" --entitlements "$ENT/widget.plist" "$WEX"
+codesign --force --options runtime --sign "$IDENTITY" --entitlements "$ENT/app.plist" "$APP"
+rm -rf "$ENT"
 
 # Make the system pick up the newly signed widget.
 pluginkit -a "$WEX" 2>/dev/null || true

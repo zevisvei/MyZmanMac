@@ -1,16 +1,13 @@
 import AppKit
 
-/// Lets a user enable the widgets from Settings: macOS lists widgets only for apps signed with a
-/// developer certificate, so this re-signs the installed app with the user's own free
-/// "Apple Development" certificate (via the bundled enable-widget.sh) and relaunches it.
+/// macOS lists widgets only for apps with a certificate-based signature (official releases have one).
+/// For an ad-hoc signed copy – e.g. built from source – this re-signs the installed app via the
+/// bundled enable-widget.sh, which creates a local self-signed certificate if needed, and relaunches it.
 enum WidgetSigner {
     enum Status {
-        case enabled(String)        // signed with a developer certificate
-        case certificateAvailable   // not yet, but a certificate exists – one click away
-        case noCertificate          // the user needs Xcode + Apple ID first
+        case enabled(String)  // signed with a certificate: widgets are available
+        case adHoc            // one click away
     }
-
-    static let xcodeURL = URL(string: "macappstore://apps.apple.com/app/id497799835")!
 
     private static func run(_ tool: String, _ args: [String]) -> String {
         let p = Process()
@@ -33,15 +30,8 @@ enum WidgetSigner {
             .map { String($0.dropFirst("Authority=".count)) }
     }
 
-    static func developerIdentity() -> String? {
-        let out = run("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"])
-        guard let r = out.range(of: #""Apple Development: [^"]+""#, options: .regularExpression) else { return nil }
-        return String(out[r]).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-    }
-
     static func status() -> Status {
-        if let a = currentAuthority() { return .enabled(a) }
-        return developerIdentity() == nil ? .noCertificate : .certificateAvailable
+        currentAuthority().map(Status.enabled) ?? .adHoc
     }
 
     /// Runs enable-widget.sh detached: it quits this app, re-signs it and opens it again.

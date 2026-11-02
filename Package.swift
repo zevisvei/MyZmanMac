@@ -18,7 +18,11 @@ let package = Package(
         .executableTarget(
             name: "MyZmanWidget",
             dependencies: ["KosherSwift"],
-            path: "Sources/MyZmanWidget"
+            path: "Sources/MyZmanWidget",
+            swiftSettings: [.unsafeFlags(["-application-extension"])],
+            // Like Xcode's widget targets: start in NSExtensionMain, which connects the process to the
+            // extension system (a plain main() runs but is never registered, so the widget never shows).
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", "-Xlinker", "-application_extension"])]
         ),
     ]
 )
