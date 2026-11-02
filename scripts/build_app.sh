@@ -91,9 +91,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "› Signing (ad-hoc)"
-codesign --force --sign - --entitlements build/widget.entitlements "$WEX"
-codesign --force --sign - "$APP"
+# Ad-hoc by default. Set SIGN_IDENTITY (e.g. "Apple Development: you@example.com") to sign with a
+# real certificate – macOS only lists the widget in the widget gallery for certificate-signed apps.
+IDENTITY="${SIGN_IDENTITY:--}"
+echo "› Signing (${IDENTITY})"
+codesign --force --options runtime --sign "$IDENTITY" --entitlements build/widget.entitlements "$WEX"
+codesign --force --options runtime --sign "$IDENTITY" "$APP"
 
 if [[ "${1:-}" == "--install" ]]; then
   pkill -x MyZman 2>/dev/null || true

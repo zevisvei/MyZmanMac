@@ -79,6 +79,11 @@ extension View {
 enum DebugDump {
     /// `--preview [tab]` shows the popover content in an ordinary window (for screenshots during development).
     @MainActor static func preview(tab: String?) {
+        if let i = CommandLine.arguments.firstIndex(of: "--date"), i + 1 < CommandLine.arguments.count {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd"
+            if let d = f.date(from: CommandLine.arguments[i + 1]) { AppModel.shared.selectedDate = d }
+        }
         DispatchQueue.main.async {
             let root = PopoverView(initialTab: tab.flatMap(PopoverTab.init(rawValue:)) ?? .zmanim)
                 .environmentObject(AppModel.shared)

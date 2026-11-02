@@ -12,6 +12,9 @@ struct ZmanimListView: View {
         let dayDiff = cal.dateComponents([.day], from: cal.startOfDay(for: Date()), to: cal.startOfDay(for: date)).day ?? 0
         let dayState: ZmanRow.DayState = dayDiff == 0 ? .today : dayDiff < 0 ? .past : .future
 
+        // One container: the popover gives its tab content maxHeight: .infinity, which would
+        // otherwise be applied to each top-level view here and stretch the banner.
+        VStack(spacing: 4) {
         if dayDiff != 0 {
             HStack {
                 Image(systemName: dayDiff < 0 ? "clock.arrow.circlepath" : "calendar.badge.clock")
@@ -24,10 +27,10 @@ struct ZmanimListView: View {
             .padding(.horizontal, 8)
         }
 
-        ScrollView {
-            TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                let now = ctx.date
-                let nextID = isToday ? model.nextZmanID(at: now) : nil
+        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            let now = ctx.date
+            let nextID = isToday ? model.nextZmanID(at: now) : nil
+            ScrollView {
                 VStack(spacing: 2) {
                     ForEach(zmanim) { z in
                         ZmanRow(z: z, now: now, day: dayState, isNext: z.id == nextID)
@@ -38,6 +41,7 @@ struct ZmanimListView: View {
         .id(model.dayKey(date))
         if s.zmanim.isEmpty {
             Text("הרשימה ריקה – הוסיפו זמנים בהגדרות").foregroundStyle(.secondary)
+        }
         }
     }
 }
@@ -99,7 +103,7 @@ private struct ZmanRow: View {
 
     private func color(past: Bool, isDuration: Bool) -> Color {
         guard !isDuration else { return .secondary }
-        if model.settings.colorPastZmanim { return Color(nsColor: past ? .systemRed : .systemGreen) }
+        if model.settings.colorPastZmanim { return Color(nsColor: past ? .systemRed : .systemBlue) }
         return past ? .secondary : .primary
     }
 

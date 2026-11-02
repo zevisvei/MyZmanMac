@@ -33,7 +33,7 @@ private struct GeneralSettings: View {
                 .pickerStyle(.segmented)
                 Toggle("שעון 24 שעות", isOn: $model.settings.use24h)
                 Toggle("הצג שניות", isOn: $model.settings.showSeconds)
-                Toggle("צבע לזמנים (אדום – עבר, ירוק – עתידי)", isOn: $model.settings.colorPastZmanim)
+                Toggle("צבע לזמנים (אדום – עבר, כחול – עתידי)", isOn: $model.settings.colorPastZmanim)
                 Toggle("התאריך העברי מתחלף בשקיעה", isOn: $model.settings.hebrewDateChangesAtSunset)
             }
             Section("לוח וחגים") {
