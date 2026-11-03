@@ -20,10 +20,10 @@ struct ZmanDef: Identifiable {
     enum Kind { case earliest, deadline, neutral }
 
     var kind: Kind {
-        let earliest = ["GetMisheyakir", "ZmanGetMisheyakir", "GetSunrise", "GetSeaLevelSunrise", "GetTzais",
+        let earliest = ["GetMisheyakir", "ZmanGetMisheyakir", "GetSunrise", "VisibleSunrise", "GetSeaLevelSunrise", "GetTzais",
                         "GetMinchaGedola", "GetMinchaKetana", "GetTchilasZmanKidushLevana"]
         // Bein hashmashos (Yereim's and Rabbeinu Tam's) starts it: the end of the day, a deadline (mincha, melacha).
-        let deadline = ["GetSofZman", "GetSunset", "GetSeaLevelSunset", "GetCandleLighting", "ZmanGetCandleLighting",
+        let deadline = ["GetSofZman", "GetSunset", "VisibleSunset", "GetSeaLevelSunset", "GetCandleLighting", "ZmanGetCandleLighting",
                         "GetBainHasmashosYereim", "GetBainHasmashosRT", "ZmanGetBeinHashmases",
                         "GetSamuchLeMinchaKetana", "GetSolarMidnight"]
         // Alos both starts the day and ends the night, chatzos and plag serve both ways: nearest.

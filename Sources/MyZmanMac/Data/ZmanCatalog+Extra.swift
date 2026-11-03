@@ -5,6 +5,15 @@ import KosherSwift
 /// Yalkut Yosef), Kiddush Levana, Samuch Lemincha Ketana and a few more KosherJava opinions.
 extension ZmanCatalog {
     static let extra: [ZmanDef] = [
+        // From a table the user imported (ChaiTables): the sun seen over the actual horizon of the place.
+        ZmanDef(id: "VisibleSunrise", he: "נץ הנראה (לוח מיובא)", en: "Visible Sunrise (imported table)",
+                heInfo: "הנץ הנראה לפי תוואי השטח, מלוח חי טבלאות שייבאתם בהגדרות ← מיקום. בימים שאין בלוח – לא מוצג.",
+                enInfo: "Visible sunrise over the local terrain, from a ChaiTables table imported in Settings → Location.",
+                calc: .time { VisibleSunriseTable.lookup($0) { $0.sunrise(on: $1, calendar: $2) } }),
+        ZmanDef(id: "VisibleSunset", he: "שקיעה הנראית (לוח מיובא)", en: "Visible Sunset (imported table)",
+                heInfo: "השקיעה הנראית לפי תוואי השטח, מלוח חי טבלאות שייבאתם בהגדרות ← מיקום. בימים שאין בלוח – לא מוצג.",
+                enInfo: "Visible sunset over the local terrain, from a ChaiTables table imported in Settings → Location.",
+                calc: .time { VisibleSunriseTable.lookup($0) { $0.sunset(on: $1, calendar: $2) } }),
         // Amudei Horaah: degree-based zmanim scaled to the equinox in Jerusalem, as in Rabbi Ovadiah Yosef's luachs.
         ZmanDef(id: "GetAlosAmudeiHoraah", he: "עלות השחר עמודי הוראה", en: "Alos Amudei Horaah",
                 heInfo: "עלות השחר לפי עמודי הוראה (שיטת הרב עובדיה יוסף): 16.04 מעלות ביום השוויון בירושלים, מומר לשעות זמניות של היום והמקום.",

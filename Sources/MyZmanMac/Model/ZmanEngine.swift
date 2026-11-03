@@ -50,6 +50,7 @@ enum ZmanEngine {
     static func calendar(for day: Date, settings: AppSettings) -> ComplexZmanimCalendar {
         let loc = settings.location
         let czc = ComplexZmanimCalendar(location: loc.geoLocation())
+        VisibleSunriseTable.imported = settings.visibleSunrise
         czc.workingDate = noon(of: day, in: loc.timeZone)
         czc.useElevation = settings.useElevation
         if settings.useUSNO { czc.astronomicalCalculator = SunTimesCalculator() }

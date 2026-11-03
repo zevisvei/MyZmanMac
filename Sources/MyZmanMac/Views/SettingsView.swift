@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @ViewState private var tab: Int
@@ -293,6 +294,7 @@ private struct LocationSettings: View {
                     }
                     if let error { Text(error).font(.caption).foregroundStyle(.red) }
                 }
+                VisibleSunriseSection()
                 Section {
                     Text("רשימת המיקומים נלקחה מ-MyZman ולא נבדקה; לרוב המיקומים חסר גובה.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -313,6 +315,107 @@ private struct LocationSettings: View {
         Task {
             do { draft = try await locator.currentLocation() } catch { self.error = error.localizedDescription }
             locating = false
+        }
+    }
+}
+
+/// Importing a ChaiTables visible sunrise/sunset table for the selected location.
+private struct VisibleSunriseSection: View {
+    @EnvironmentObject var model: AppModel
+    @ViewState private var importing = false
+    @ViewState private var message: String?
+    @ViewState private var failed = false
+
+    private var key: String {
+        VisibleSunriseTable.key(latitude: model.settings.location.latitude, longitude: model.settings.location.longitude)
+    }
+
+    var body: some View {
+        let table = model.settings.visibleSunrise[key]
+        Section("נץ ושקיעה הנראים (חי טבלאות)") {
+            if let table, let range = table.dateRange {
+                LabeledContent("לוח ל\(model.settings.location.displayName)",
+                               value: "\(range.first) – \(range.last)")
+                    .help(table.source)
+            }
+            HStack {
+                Button(importing ? "מייבא…" : table == nil ? "ייבוא לוח…" : "ייבוא שנה נוספת…", action: pick)
+                    .disabled(importing)
+                if table != nil {
+                    Button("מחיקת הלוח") {
+                        model.settings.visibleSunrise[key] = nil
+                        message = nil
+                    }
+                }
+                Spacer()
+                if table != nil, !shown("VisibleSunrise") || (!(table?.sunset.isEmpty ?? true) && !shown("VisibleSunset")) {
+                    Button("הוסף לרשימת הזמנים", action: addZmanim)
+                }
+            }
+            if let message {
+                Text(message).font(.caption).foregroundStyle(failed ? .red : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("""
+            הלוח הוא למיקום שנבחר כעת בלבד. באתר chaitables.com: „ארץ ישראל (ערים)” ← בוחרים עיר ושנה ← \
+            בסוג הלוח „זריחה ושקיעה הנראים” ← „כן, נא לחשב את הלוחות”, ושומרים את הדף (⌘S). \
+            אפשר גם קובץ ‎.ics מהאתר החדש של חי טבלאות, או CSV עם תאריך לועזי בכל שורה.
+            """)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func shown(_ defID: String) -> Bool { model.settings.zmanim.contains { $0.defID == defID } }
+
+    private func addZmanim() {
+        // Each right after its sea-level counterpart in the user's list, or at the end.
+        for (id, after, name) in [("VisibleSunrise", "GetSunrise", "נץ הנראה"), ("VisibleSunset", "GetSunset", "שקיעה הנראית")]
+        where !shown(id) && (id == "VisibleSunrise" || !(model.settings.visibleSunrise[key]?.sunset.isEmpty ?? true)) {
+            let item = ZmanItem(name: name, defID: id)
+            if let i = model.settings.zmanim.firstIndex(where: { $0.defID == after }) {
+                model.settings.zmanim.insert(item, at: i + 1)
+            } else {
+                model.settings.zmanim.append(item)
+            }
+        }
+    }
+
+    private func pick() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.html, .webArchive, .commaSeparatedText, .tabSeparatedText, .plainText,
+                                     .calendarEvent, .data]
+        panel.allowsMultipleSelection = true
+        panel.message = "בחרו את הדף השמור מחי טבלאות (HTML), קובץ ‎.ics או CSV"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        let urls = panel.urls, tz = model.settings.location.timeZoneID, key = key
+        importing = true
+        message = nil
+        Task {
+            // The parse is heavy regex work: off the main thread.
+            let result = await Task.detached { () -> Result<VisibleSunriseTable, Error> in
+                do {
+                    var merged: VisibleSunriseTable?
+                    for url in urls {
+                        let t = try VisibleSunriseTable.parse(try Data(contentsOf: url), fileName: url.lastPathComponent, timeZoneID: tz)
+                        merged = merged.map { $0.merging(t) } ?? t
+                    }
+                    return merged.map(Result.success) ?? .failure(CocoaError(.fileReadUnknown))
+                } catch { return .failure(error) }
+            }.value
+            importing = false
+            switch result {
+            case .success(let t):
+                let table = model.settings.visibleSunrise[key].map { $0.merging(t) } ?? t
+                model.settings.visibleSunrise[key] = table
+                failed = false
+                let place = t.locationName.isEmpty ? "" : " (\(t.locationName))"
+                message = "יובאו \(t.sunrise.count) ימי נץ ו-\(t.sunset.count) ימי שקיעה\(place). ודאו שהלוח הוא של \(model.settings.location.displayName)."
+            case .failure(let error):
+                failed = true
+                message = error.localizedDescription
+            }
         }
     }
 }

@@ -194,6 +194,15 @@ enum DebugDump {
         if let city = args.dropFirst().first, let loc = Location.builtIn.first(where: { $0.nameEn == city || $0.nameHe == city }) {
             s.location = loc
         }
+        // `--visible <file>`: import a visible sunrise table for the location (as in Settings → Location).
+        if let i = args.firstIndex(of: "--visible"), let path = args[safe: i + 1] {
+            do {
+                let t = try VisibleSunriseTable.parse(try Data(contentsOf: URL(fileURLWithPath: path)),
+                                                      fileName: (path as NSString).lastPathComponent, timeZoneID: s.location.timeZoneID)
+                s.visibleSunrise[VisibleSunriseTable.key(latitude: s.location.latitude, longitude: s.location.longitude)] = t
+                s.zmanim += [ZmanItem(name: "נץ הנראה", defID: "VisibleSunrise"), ZmanItem(name: "שקיעה הנראית", defID: "VisibleSunset")]
+            } catch { print("import failed: \(error.localizedDescription)") }
+        }
         let parse = DateFormatter()
         parse.dateFormat = "yyyy-MM-dd HH"
         parse.timeZone = s.location.timeZone

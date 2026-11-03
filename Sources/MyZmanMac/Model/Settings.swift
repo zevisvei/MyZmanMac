@@ -311,6 +311,8 @@ struct AppSettings: Codable, Hashable {
     var customLocations: [Location] = []
     /// Shown side by side with the current location in the comparison tab.
     var compareLocations: [Location] = []
+    /// Visible sunrise/sunset tables imported from ChaiTables, by VisibleSunriseTable.key of the location.
+    var visibleSunrise: [String: VisibleSunriseTable] = [:]
     var zmanim: [ZmanItem] = ZmanCatalog.defaults
     var reminders: [Reminder] = []
     var menuBar = MenuBarOptions()
@@ -389,6 +391,7 @@ struct AppSettings: Codable, Hashable {
         location = (try? c.decode(Location.self, forKey: .location)) ?? d.location
         customLocations = c.lossyArray(Location.self, forKey: .customLocations) ?? d.customLocations
         compareLocations = c.lossyArray(Location.self, forKey: .compareLocations) ?? d.compareLocations
+        visibleSunrise = (try? c.decode([String: VisibleSunriseTable].self, forKey: .visibleSunrise)) ?? d.visibleSunrise
         zmanim = c.lossyArray(ZmanItem.self, forKey: .zmanim) ?? d.zmanim
         reminders = c.lossyArray(Reminder.self, forKey: .reminders) ?? d.reminders
         menuBar = (try? c.decode(MenuBarOptions.self, forKey: .menuBar)) ?? d.menuBar
