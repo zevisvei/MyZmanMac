@@ -23,7 +23,13 @@ struct VisibleSunriseTable: Codable, Hashable {
 
     /// The imported tables by location (`key(latitude:longitude:)`), for the zmanim that read them. Set from the
     /// settings each time a calendar is made (ZmanEngine.calendar), so it always matches the settings in use.
-    nonisolated(unsafe) static var imported: [String: VisibleSunriseTable] = [:]
+    /// Locked: the widget computes zmanim on WidgetKit's queue and on the main thread at once.
+    static var imported: [String: VisibleSunriseTable] {
+        get { importedLock.lock(); defer { importedLock.unlock() }; return _imported }
+        set { importedLock.lock(); defer { importedLock.unlock() }; _imported = newValue }
+    }
+    private nonisolated(unsafe) static var _imported: [String: VisibleSunriseTable] = [:]
+    private static let importedLock = NSLock()
 
     static func key(latitude: Double, longitude: Double) -> String { "\(latitude)|\(longitude)" }
 

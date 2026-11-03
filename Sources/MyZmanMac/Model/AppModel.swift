@@ -29,7 +29,8 @@ final class AppModel: ObservableObject {
                 || settings.inIsrael != oldValue.inIsrael || settings.rounding != oldValue.rounding
                 || settings.showSeconds != oldValue.showSeconds || settings.candleLightingOffset != oldValue.candleLightingOffset
                 || settings.havdalahDefID != oldValue.havdalahDefID || settings.fastStartDefID != oldValue.fastStartDefID
-                || settings.fastEndDefID != oldValue.fastEndDefID
+                || settings.fastEndDefID != oldValue.fastEndDefID || settings.tishaBavEndDefID != oldValue.tishaBavEndDefID
+                || settings.chanukahAtTzais != oldValue.chanukahAtTzais || settings.visibleSunrise != oldValue.visibleSunrise
             if settings.reminders != oldValue.reminders || timesChanged {
                 ReminderScheduler.shared.reschedule(settings)
             }

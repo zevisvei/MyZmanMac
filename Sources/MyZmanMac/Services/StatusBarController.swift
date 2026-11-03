@@ -75,27 +75,31 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         return item
     }
 
-    /// A press on the button while the popover is open first closes the transient popover (AppKit closes it as the
-    /// app's focus moves, before the press reaches the button), then reaches the button's action: that same press
-    /// mustn't reopen it. When the popover closes with the mouse held down on the button, remember that press.
-    private var closedByPress: TimeInterval?
+    /// A press on the button while the popover is open may first close the transient popover (AppKit closes it as
+    /// the app's focus moves), and only then reach the button's action: that same press mustn't reopen it. The
+    /// menu bar items are drawn by another process (MenuBarAgent), which forwards the press to the app a little
+    /// later – by then the mouse may already be up (a quick tap), so the press can't be told apart by the mouse
+    /// state. Instead: an action within a moment after the popover closed belongs to the press that closed it.
+    private var closedAt: TimeInterval?
+    private static let sameClick: TimeInterval = 0.4
 
     @objc private func toggle(_ sender: Any?) {
-        let press = NSApp.currentEvent?.timestamp
+        let now = ProcessInfo.processInfo.systemUptime
         if popover?.isShown == true {
             popover?.performClose(sender)
-        } else if let closed = closedByPress, let press, abs(press - closed) < 1 {
-            closedByPress = nil
+        } else if let closedAt, now - closedAt < Self.sameClick {
+            self.closedAt = nil
         } else {
             showPopover()
         }
     }
 
     func popoverWillClose(_ notification: Notification) {
-        closedByPress = nil
-        guard NSEvent.pressedMouseButtons != 0, let button = item?.button, let window = button.window else { return }
-        let onButton = window.convertToScreen(button.convert(button.bounds, to: nil)).contains(NSEvent.mouseLocation)
-        if onButton { closedByPress = ProcessInfo.processInfo.systemUptime }   // the clock of NSEvent.timestamp
+        closedAt = nil
+        // Only when the popover closes with the mouse over the menu bar item: a press there may be on its way.
+        guard let button = item?.button, let window = button.window else { return }
+        let frame = window.convertToScreen(button.convert(button.bounds, to: nil)).insetBy(dx: -2, dy: -4)
+        if frame.contains(NSEvent.mouseLocation) { closedAt = ProcessInfo.processInfo.systemUptime }
     }
 
     /// Opens the popover under the menu bar item (e.g. from a widget click). False if there's no item.

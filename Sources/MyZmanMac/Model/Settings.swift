@@ -421,6 +421,10 @@ struct AppSettings: Codable, Hashable {
         // The selected location is stored by value: pick up corrections made to the built-in list since.
         if location.region != .custom,
            let fresh = Location.builtIn.first(where: { $0.nameEn == location.nameEn && $0.nameHe == location.nameHe }) {
+            // An imported visible sunrise table is kept by coordinates: move it along with a corrected location.
+            let oldKey = VisibleSunriseTable.key(latitude: location.latitude, longitude: location.longitude)
+            let newKey = VisibleSunriseTable.key(latitude: fresh.latitude, longitude: fresh.longitude)
+            if oldKey != newKey, let table = visibleSunrise.removeValue(forKey: oldKey) { visibleSunrise[newKey] = table }
             location = fresh
         }
     }

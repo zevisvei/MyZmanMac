@@ -91,9 +91,13 @@ enum Exporter {
         // Columns from the right: date, Hebrew date, the zmanim, then notes (parsha, holidays) on the left.
         let margin: CGFloat = 24
         let names = settings.zmanim.map(\.name)
-        let dateW: CGFloat = 34, hebW: CGFloat = 62, notesW: CGFloat = 150
-        let zmanW = max(26, (page.width - 2 * margin - dateW - hebW - notesW) / CGFloat(max(names.count, 1)))
-        let size: CGFloat = zmanW < 36 ? 6.5 : 8
+        // A long list squeezes the notes column first, then the zmanim columns and the font, so it always fits the page.
+        let dateW: CGFloat = 34, hebW: CGFloat = 62, count = CGFloat(max(names.count, 1))
+        let avail = page.width - 2 * margin - dateW - hebW
+        let notesW = min(150, max(80, avail - 26 * count))
+        let zmanW = (avail - notesW) / count
+        let size: CGFloat = zmanW >= 36 ? 8 : max(4, min(6.5, zmanW / 3.8))
+        let inset: CGFloat = zmanW < 26 ? 0.5 : 2
         let widths = [dateW, hebW] + Array(repeating: zmanW, count: names.count) + [notesW]
         let titleH: CGFloat = 30, headerH: CGFloat = 30, footerH: CGFloat = 26, rowH: CGFloat = size + 6
         let perPage = Int((page.height - 2 * margin - titleH - headerH - footerH) / rowH)
@@ -107,7 +111,7 @@ enum Exporter {
             style.lineBreakMode = bold ? .byWordWrapping : .byTruncatingTail
             let font = bold ? NSFont.boldSystemFont(ofSize: size) : NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular)
             NSAttributedString(string: text, attributes: [.font: font, .paragraphStyle: style, .foregroundColor: color])
-                .draw(with: rect.insetBy(dx: 2, dy: 0), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+                .draw(with: rect.insetBy(dx: inset, dy: 0), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         }
         func row(_ cells: [String], y: CGFloat, height: CGFloat, size: CGFloat, bold: Bool = false) {
             var x = page.width - margin

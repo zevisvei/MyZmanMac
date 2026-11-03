@@ -8,7 +8,12 @@ enum MyZmanApp {
     static func main() {
         if let i = CommandLine.arguments.firstIndex(of: "--pdf"), i + 1 < CommandLine.arguments.count {
             MainActor.assumeIsolated {
-                let s = AppModel.shared.settings, start = Date()
+                var s = AppModel.shared.settings
+                let start = Date()
+                // `--all`: a long list, to check the layout still fits the page.
+                if CommandLine.arguments.contains("--all") {
+                    s.zmanim += ZmanCatalog.all.prefix(20).map { ZmanItem(name: $0.he, defID: $0.id) }
+                }
                 let end = Calendar.current.date(byAdding: .day, value: 45, to: start)!
                 Exporter.writePDF(Exporter.pdfDays(from: start, to: end, settings: s), settings: s,
                                   to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
