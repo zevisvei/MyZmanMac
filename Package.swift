@@ -6,7 +6,8 @@ let package = Package(
     defaultLocalization: "he",
     platforms: [.macOS(.v14)],
     dependencies: [
-        .package(url: "https://github.com/Elyahu41/KosherSwift.git", from: "2.0.0"),
+        // KosherSwift 2.0.0 with crash fixes; see Vendor/KosherSwift/PATCHES.md.
+        .package(path: "Vendor/KosherSwift"),
     ],
     targets: [
         .executableTarget(
