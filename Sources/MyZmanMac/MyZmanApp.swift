@@ -5,6 +5,10 @@ import ServiceManagement
 struct MyZmanApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel.shared
+    /// MenuBarExtra re-creates its status item whenever its isInserted binding is a new one, which a
+    /// binding through `model` is on every update (the menu bar title changes every minute) – clicks
+    /// then never open the popover. A binding to stored state is stable; AppModel keeps it in sync.
+    @AppStorage(AppModel.showInMenuBarKey) private var showInMenuBar = true
 
     init() {
         if CommandLine.arguments.contains("--dump") { DebugDump.run(); exit(0) }
@@ -14,7 +18,7 @@ struct MyZmanApp: App {
     var body: some Scene {
         // Settings and the main window are AppKit windows (AppWindows), so they can be opened
         // even when there is no status item to host a SwiftUI openWindow action.
-        MenuBarExtra(isInserted: $model.settings.menuBar.showInMenuBar) {
+        MenuBarExtra(isInserted: $showInMenuBar) {
             PopoverView()
                 .environmentObject(model)
                 .environment(\.layoutDirection, .rightToLeft)
@@ -53,9 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 enum AppWindows {
     private static var windows: [String: NSWindow] = [:]
 
-    /// The popover when the app is in the menu bar, otherwise the same content in a window.
+    /// The zmanim window (the popover's content). Opening the menu bar popover itself from code isn't
+    /// reliable – a synthesized click on the status item doesn't open it on current macOS – so a widget
+    /// click or reopening the app always shows the window.
     static func showApp() {
-        if AppModel.shared.settings.menuBar.showInMenuBar { StatusItem.reopenPopover() } else { showMain() }
+        showMain()
     }
 
     static func showMain() {
@@ -150,7 +156,7 @@ enum DebugDump {
                 : AnyView(PopoverView(initialTab: tab.flatMap(PopoverTab.init(rawValue:)) ?? .zmanim)
                     .environmentObject(AppModel.shared).environment(\.layoutDirection, .rightToLeft))
             let big = tab?.hasPrefix("settings") == true
-            let w = NSWindow(contentRect: NSRect(x: 200, y: 200, width: big ? 620 : 370, height: big ? 560 : 600),
+            let w = NSWindow(contentRect: NSRect(x: 200, y: 200, width: big ? 620 : 370, height: big ? 560 : 640),
                              styleMask: [.titled], backing: .buffered, defer: false)
             w.contentView = NSHostingView(rootView: root)
             if CommandLine.arguments.contains("--dark") { w.appearance = NSAppearance(named: .darkAqua) }

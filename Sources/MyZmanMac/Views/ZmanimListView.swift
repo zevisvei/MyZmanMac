@@ -27,7 +27,10 @@ struct ZmanimListView: View {
             .padding(.horizontal, 8)
         }
 
-        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+        // Rows change state at each zman, and the next one shows a countdown: tick only for those.
+        // (Only the next zman shows a countdown, so any zman's last 10 minutes is the next one's.)
+        let times = isToday ? zmanim.compactMap(\.time) : []
+        TimelineView(Ticks(everySecond: isToday && s.showSeconds, countdowns: times, changes: times)) { ctx in
             let now = ctx.date
             let nextID = isToday ? model.nextZmanID(at: now) : nil
             ScrollView {
@@ -118,7 +121,7 @@ private struct ZmanRow: View {
                 }
                 Spacer()
                 if isNext, let t = z.time {
-                    Text("\u{200E}-\(ZmanFormat.countdown(t.timeIntervalSince(now), showSeconds: true))")
+                    Text("\u{200E}-\(ZmanFormat.countdown(t.timeIntervalSince(now), showSeconds: s.showSeconds))")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }

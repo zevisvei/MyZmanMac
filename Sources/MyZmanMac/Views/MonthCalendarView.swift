@@ -51,11 +51,9 @@ struct MonthCalendarView: View {
                     .buttonStyle(.borderless).help("שנה הבאה")
             }
 
-            Text(greg).font(.caption).foregroundStyle(.secondary).padding(.top, -6)
-
-            HStack(spacing: 8) {
-                Button("היום") { jump(to: Date()) }
-                DateJumpButton(date: Binding(get: { anchor }, set: { jump(to: $0) }))
+            // "Today" and the date picker are in the day header above, shared by all tabs.
+            HStack {
+                Text(greg).font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Menu("מועדים") {
                     ForEach(upcomingEvents(from: anchor), id: \.date) { e in
@@ -63,16 +61,17 @@ struct MonthCalendarView: View {
                     }
                 }
                 .fixedSize()
+                .controlSize(.small)
                 .help("דילוג לחג או מועד קרוב")
             }
-            .controlSize(.small)
+            .padding(.top, -6)
 
             let cols = Array(repeating: GridItem(.flexible(), spacing: 3), count: 7)
             LazyVGrid(columns: cols, spacing: 3) {
                 ForEach(["א׳", "ב׳", "ג׳", "ד׳", "ה׳", "ו׳", "ש׳"], id: \.self) {
                     Text($0).font(.caption.bold()).foregroundStyle(.secondary)
                 }
-                ForEach(0..<lead, id: \.self) { _ in Color.clear.frame(height: 40) }
+                ForEach(0..<lead, id: \.self) { _ in Color.clear.frame(height: 34) }
                 ForEach(dates, id: \.self) { d in
                     DayCell(date: d, hasCalendarEvent: busyDays.contains(model.dayKey(d)),
                             select: { jump(to: d) },
@@ -87,21 +86,13 @@ struct MonthCalendarView: View {
 
             Spacer(minLength: 0)
 
-            // Floating card: the selected day's details and calendar events, always visible.
-            VStack(alignment: .leading, spacing: 4) {
-                let sel = model.dayInfo(model.selectedDate)
-                HStack {
-                    Text(sel.hebrewDate).font(.subheadline.bold())
-                    Text(model.format.localizedDate(model.selectedDate, template: "EEEEdMMM"))
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("זמני היום", action: onPick).buttonStyle(.link).font(.caption)
-                }
-                FlowChips(items: ([sel.parsha] + sel.events).filter { !$0.isEmpty })
+            // Floating card: the selected day's calendar events (its date and details are in the day header above).
+            VStack(alignment: .trailing, spacing: 4) {
                 ScrollView {
                     DayEventsSection(date: model.selectedDate, embedded: true)
                 }
-                .frame(maxHeight: 260)
+                .frame(maxHeight: 140)
+                Button("זמני היום ←", action: onPick).buttonStyle(.link).font(.caption)
             }
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 10).fill(.regularMaterial))
@@ -188,7 +179,7 @@ private struct DayCell: View {
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, minHeight: 40)
+            .frame(maxWidth: .infinity, minHeight: 34)
             .background(
                 RoundedRectangle(cornerRadius: 6)
                     .fill(isToday ? Color.accentColor.opacity(0.35)

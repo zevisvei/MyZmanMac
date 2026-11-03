@@ -23,9 +23,8 @@ struct PopoverView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            if tab != .calendar {
-                DayHeader(date: model.selectedDate)
-            }
+            // The same day header on every tab, so switching tabs only swaps the content below it.
+            DayHeader(date: model.selectedDate)
 
             Group {
                 switch tab {
@@ -44,7 +43,7 @@ struct PopoverView: View {
                 .help(Disclaimer.full)
         }
         .padding(12)
-        .frame(width: 370, height: 600)
+        .frame(width: 370, height: 640)
         // Opaque, so the window behind the popover doesn't wash out the colors.
         .background(Color(nsColor: .windowBackgroundColor))
         // Bring the (menu-bar-only) app forward so controls render active, in the accent color.
@@ -91,7 +90,7 @@ private struct TopBar: View {
 
             Spacer()
 
-            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            TimelineView(Ticks(everySecond: model.settings.showSeconds)) { ctx in
                 Text(model.format.time(ctx.date))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)

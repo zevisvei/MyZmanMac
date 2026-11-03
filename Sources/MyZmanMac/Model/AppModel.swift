@@ -12,6 +12,9 @@ final class AppModel: ObservableObject {
             guard settings != oldValue else { return }
             if settings.zmanim != oldValue.zmanim, pruneOrphans() { return }  // didSet runs again with the pruned settings
             settings.save()
+            if settings.menuBar.showInMenuBar != UserDefaults.standard.bool(forKey: Self.showInMenuBarKey) {
+                UserDefaults.standard.set(settings.menuBar.showInMenuBar, forKey: Self.showInMenuBarKey)
+            }
             invalidate()
             WidgetCenter.shared.reloadAllTimelines()
             if settings.appearance != oldValue.appearance { applyAppearance() }
@@ -55,15 +58,29 @@ final class AppModel: ObservableObject {
     private var todayCache: (key: String, zmanim: [ComputedZman], tomorrow: [ComputedZman])?
     private var lastDayKey = ""
 
+    /// Mirrors settings.menuBar.showInMenuBar for the MenuBarExtra (see MyZmanApp).
+    static let showInMenuBarKey = "showInMenuBar"
+
     private init() {
         settings = AppSettings.load()
+        UserDefaults.standard.set(settings.menuBar.showInMenuBar, forKey: Self.showInMenuBarKey)
+        // ⌘-dragging the item out of the menu bar clears the stored flag: reflect that in the settings.
+        NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let stored = UserDefaults.standard.object(forKey: Self.showInMenuBarKey) as? Bool ?? true
+                if stored != self.settings.menuBar.showInMenuBar { self.settings.menuBar.showInMenuBar = stored }
+            }
+        }
         settings.save()  // refresh the widget's copy
         tick()
-        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
+        // After sleep or a clock change, a pending tick may be far off: catch up now.
+        for name in [NSWorkspace.didWakeNotification, Notification.Name.NSSystemClockDidChange] {
+            let center = name == NSWorkspace.didWakeNotification ? NSWorkspace.shared.notificationCenter : .default
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tick() }
+            }
         }
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
         NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -146,6 +163,35 @@ final class AppModel: ObservableObject {
         }
         let title = buildMenuBarTitle(at: date)
         if title != menuBarTitle { menuBarTitle = title }
+        scheduleNextTick(after: date)
+    }
+
+    /// The next moment the menu bar title (or the day) can change – not a fixed 1-second timer.
+    private func scheduleNextTick(after date: Date) {
+        let mb = settings.menuBar
+        var ticks = Ticks()
+        if mb.showInMenuBar, let t = menuBarZman(at: date)?.time {
+            ticks.changes.append(t)    // the next zman takes over
+            if mb.showCountdown {
+                let within = Double(mb.countdownWithinMinutes * 60)
+                if within > 0 { ticks.changes.append(t.addingTimeInterval(-within)) }  // the countdown appears
+                if within == 0 || t.timeIntervalSince(date) <= within {
+                    if settings.showSeconds { ticks.everySecond = true } else { ticks.countdowns = [t] }
+                }
+            }
+        }
+        if mb.showHebrewDate, settings.hebrewDateChangesAtSunset, let sunset = ZmanEngine.sunset(on: date, settings: settings) {
+            ticks.changes.append(sunset)
+        }
+        // A hair after the boundary, so the new value is already current when we look.
+        let fire = ticks.next(after: date).addingTimeInterval(0.02)
+        timer?.invalidate()
+        let t = Timer(fire: fire, interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        t.tolerance = ticks.everySecond || fire.timeIntervalSince(date) < 2 ? 0.05 : 0.5
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
     }
 
     // MARK: - Today's zmanim

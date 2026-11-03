@@ -114,8 +114,12 @@ struct NextZmanView: View {
             if let next = day.upcoming.first, let t = next.time {
                 Text(next.item.name).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 Text(day.fmt.time(t)).font(.system(size: 30, weight: .bold, design: .rounded)).monospacedDigit()
-                Text(t, style: .timer)
-                    .font(.callout.monospacedDigit())
+                // The system redraws these itself (no timeline entries). A per-second timer only if seconds
+                // are wanted; otherwise "in 2 hours, 5 minutes", which changes once a minute.
+                Group {
+                    if day.s.showSeconds { Text(t, style: .timer) } else { Text(t, style: .relative) }
+                }
+                .font(.callout.monospacedDigit())
                     .foregroundStyle(.orange)
             }
             if family == .systemMedium {
