@@ -32,7 +32,8 @@ struct DayEventsSection: View {
                     Button("אשר גישה ליומן") {
                         Task {
                             _ = try? await sync.requestAccess()
-                            StatusItem.reopenPopover()
+                            // The permission prompt took focus and closed the popover: bring it back.
+                            AppWindows.showApp()
                         }
                     }.buttonStyle(.link)
                 } else if events.isEmpty && !adding {

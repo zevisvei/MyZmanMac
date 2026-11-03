@@ -1,37 +1,63 @@
 import SwiftUI
 import ServiceManagement
 
+/// An AppKit app (no SwiftUI App/Scene): the menu bar item is an NSStatusItem with an NSPopover
+/// (StatusBarController), and the settings / main windows are AppWindows.
 @main
-struct MyZmanApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var model = AppModel.shared
-    /// MenuBarExtra re-creates its status item whenever its isInserted binding is a new one, which a
-    /// binding through `model` is on every update (the menu bar title changes every minute) – clicks
-    /// then never open the popover. A binding to stored state is stable; AppModel keeps it in sync.
-    @AppStorage(AppModel.showInMenuBarKey) private var showInMenuBar = true
-
-    init() {
-        if CommandLine.arguments.contains("--dump") { DebugDump.run(); exit(0) }
-        if let i = CommandLine.arguments.firstIndex(of: "--preview") { DebugDump.preview(tab: CommandLine.arguments.dropFirst(i + 1).first) }
+enum MyZmanApp {
+    static func main() {
+        if CommandLine.arguments.contains("--dump") { MainActor.assumeIsolated { DebugDump.run() }; exit(0) }
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)   // menu bar app, no Dock icon (also LSUIElement in Info.plist)
+        app.mainMenu = MainMenu.make()
+        app.run()
     }
+}
 
-    var body: some Scene {
-        // Settings and the main window are AppKit windows (AppWindows), so they can be opened
-        // even when there is no status item to host a SwiftUI openWindow action.
-        MenuBarExtra(isInserted: $showInMenuBar) {
-            PopoverView()
-                .environmentObject(model)
-                .environment(\.layoutDirection, .rightToLeft)
-        } label: {
-            MenuBarLabel(title: model.menuBarTitle, showIcon: model.settings.menuBar.showIcon)
-        }
-        .menuBarExtraStyle(.window)
+/// The app has no visible menu bar of its own, but its key equivalents still work in its windows
+/// (⌘C / ⌘V / ⌘A in text fields, ⌘W, ⌘Q) only if they're in the main menu.
+enum MainMenu {
+    static func make() -> NSMenu {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "הסתר את זמנים", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "צא מזמנים", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "עריכה")
+        edit.addItem(withTitle: "בטל", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "בצע שוב", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "גזור", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "העתק", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "הדבק", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "בחר הכל", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+        main.addItem(editItem)
+
+        let windowItem = NSMenuItem()
+        let window = NSMenu(title: "חלון")
+        window.addItem(withTitle: "סגור", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        window.addItem(withTitle: "מזער", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowItem.submenu = window
+        main.addItem(windowItem)
+        return main
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        guard !CommandLine.arguments.contains("--preview") else { return }
+        _ = AppModel.shared   // loads the settings, starts the clock, schedules reminders
+        if let i = CommandLine.arguments.firstIndex(of: "--preview") {
+            MainActor.assumeIsolated { DebugDump.preview(tab: CommandLine.arguments.dropFirst(i + 1).first) }
+            return
+        }
+        MainActor.assumeIsolated { StatusBarController.shared.start() }
         // Without a status item nothing would show that the app opened, unless it started with the Mac.
         let event = NSAppleEventManager.shared().currentAppleEvent
         let atLogin = event?.eventID == kAEOpenApplication
@@ -57,11 +83,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 enum AppWindows {
     private static var windows: [String: NSWindow] = [:]
 
-    /// The zmanim window (the popover's content). Opening the menu bar popover itself from code isn't
-    /// reliable – a synthesized click on the status item doesn't open it on current macOS – so a widget
-    /// click or reopening the app always shows the window.
+    /// The menu bar popover, or – when the app isn't in the menu bar – the same content in a window.
     static func showApp() {
-        showMain()
+        if !StatusBarController.shared.showPopover() { showMain() }
     }
 
     static func showMain() {
@@ -72,7 +96,6 @@ enum AppWindows {
         show("settings", title: "הגדרות זמנים") { SettingsView() }
     }
 
-    static func isManaged(_ w: NSWindow) -> Bool { windows.values.contains(w) }
 
     private static func show<V: View>(_ id: String, title: String, content: () -> V) {
         let w = windows[id] ?? {
@@ -94,42 +117,11 @@ enum AppWindows {
     }
 }
 
-struct MenuBarLabel: View {
-    let title: String
-    let showIcon: Bool
-
-    // Keep this a single, structurally stable Text: if the label's view tree changes shape
-    // MenuBarExtra creates a fresh status item each time.
-    var body: some View {
-        if showIcon || title.isEmpty {
-            Text("\(Image(systemName: "sun.horizon"))\(title.isEmpty ? "" : " " + title)")
-        } else {
-            Text(title)
-        }
-    }
-}
-
 enum LoginItem {
     static var isEnabled: Bool { SMAppService.mainApp.status == .enabled }
 
     static func set(_ on: Bool) throws {
         if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-    }
-}
-
-enum StatusItem {
-    /// Re-opens the menu bar popover, e.g. after a system permission prompt took focus and closed it.
-    @MainActor static func reopenPopover() {
-        func button(in view: NSView?) -> NSStatusBarButton? {
-            guard let view else { return nil }
-            if let b = view as? NSStatusBarButton { return b }
-            for v in view.subviews { if let b = button(in: v) { return b } }
-            return nil
-        }
-        let window = NSApp.windows.first { $0.className.contains("NSStatusBarWindow") && $0.frame.origin.y >= 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            button(in: window?.contentView)?.performClick(nil)
-        }
     }
 }
 

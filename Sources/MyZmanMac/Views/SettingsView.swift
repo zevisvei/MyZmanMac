@@ -48,6 +48,7 @@ private struct GeneralSettings: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("צבע לזמנים (אדום – עבר, כחול – עתידי)", isOn: $model.settings.colorPastZmanim)
+                Toggle("סדר את הזמנים לפי השעה (במקום לפי סדר הרשימה)", isOn: $model.settings.sortByTime)
                 Toggle("התאריך העברי מתחלף בשקיעה", isOn: $model.settings.hebrewDateChangesAtSunset)
             }
             Section("לוח וחגים") {
@@ -145,6 +146,18 @@ private struct MenuBarSettings: View {
             Section("זמן") {
                 Picker("איזה זמן", selection: mb.zmanMode) {
                     ForEach(MenuBarZmanMode.allCases) { Text($0.title).tag($0) }
+                }
+                if model.settings.menuBar.zmanMode == .next {
+                    DisclosureGroup("אילו זמנים יוצגו") {
+                        ForEach(model.settings.zmanim.filter { $0.def?.isDuration == false }) { item in
+                            Toggle(item.name, isOn: Binding(
+                                get: { !model.settings.menuBar.hiddenZmanim.contains(item.id) },
+                                set: { on in
+                                    model.settings.menuBar.hiddenZmanim.removeAll { $0 == item.id }
+                                    if !on { model.settings.menuBar.hiddenZmanim.append(item.id) }
+                                }))
+                        }
+                    }
                 }
                 if model.settings.menuBar.zmanMode == .pinned {
                     Picker("זמן קבוע", selection: mb.pinnedZman) {
@@ -331,7 +344,9 @@ private struct ZmanimSettings: View {
                     Spacer()
                     Button("שחזר ברירת מחדל") { model.restoreDefaultZmanim() }
                 }
-                Text("גררו לשינוי הסדר, לחצו על שם לעריכה.").font(.caption).foregroundStyle(.secondary)
+                Text(model.settings.sortByTime
+                     ? "הזמנים מוצגים לפי השעה (הגדרות ← כללי). הסדר כאן קובע רק כשיש שני זמנים באותה שעה."
+                     : "גררו לשינוי הסדר, לחצו על שם לעריכה.").font(.caption).foregroundStyle(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 6) {

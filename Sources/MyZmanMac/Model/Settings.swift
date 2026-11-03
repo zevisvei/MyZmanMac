@@ -186,6 +186,8 @@ struct MenuBarOptions: Codable, Hashable {
     var showGregorianDate = false
     var zmanMode: MenuBarZmanMode = .next
     var pinnedZman: UUID?
+    /// Zmanim left out of the "next zman" rotation in the menu bar (still in the list).
+    var hiddenZmanim: [UUID] = []
     var showZmanName = true
     var showZmanTime = false
     var showCountdown = true
@@ -203,6 +205,7 @@ struct MenuBarOptions: Codable, Hashable {
         showGregorianDate = (try? c.decode(Bool.self, forKey: .showGregorianDate)) ?? d.showGregorianDate
         zmanMode = (try? c.decode(MenuBarZmanMode.self, forKey: .zmanMode)) ?? d.zmanMode
         pinnedZman = try? c.decodeIfPresent(UUID.self, forKey: .pinnedZman)
+        hiddenZmanim = (try? c.decode([UUID].self, forKey: .hiddenZmanim)) ?? d.hiddenZmanim
         showZmanName = (try? c.decode(Bool.self, forKey: .showZmanName)) ?? d.showZmanName
         showZmanTime = (try? c.decode(Bool.self, forKey: .showZmanTime)) ?? d.showZmanTime
         showCountdown = (try? c.decode(Bool.self, forKey: .showCountdown)) ?? d.showCountdown
@@ -272,6 +275,8 @@ struct AppSettings: Codable, Hashable {
     var use24h = true
     var showSeconds = false
     var colorPastZmanim = true
+    /// Show the list in time order instead of the order it's arranged in (durations go last).
+    var sortByTime = false
     var hebrewDateChangesAtSunset = true
     var appearance: AppearanceMode = .system
     var rounding: ZmanRounding = .stringent
@@ -315,6 +320,7 @@ struct AppSettings: Codable, Hashable {
         use24h = (try? c.decode(Bool.self, forKey: .use24h)) ?? d.use24h
         showSeconds = (try? c.decode(Bool.self, forKey: .showSeconds)) ?? d.showSeconds
         colorPastZmanim = (try? c.decode(Bool.self, forKey: .colorPastZmanim)) ?? d.colorPastZmanim
+        sortByTime = (try? c.decode(Bool.self, forKey: .sortByTime)) ?? d.sortByTime
         hebrewDateChangesAtSunset = (try? c.decode(Bool.self, forKey: .hebrewDateChangesAtSunset)) ?? d.hebrewDateChangesAtSunset
         appearance = (try? c.decode(AppearanceMode.self, forKey: .appearance)) ?? d.appearance
         rounding = (try? c.decode(ZmanRounding.self, forKey: .rounding)) ?? d.rounding

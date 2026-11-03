@@ -12,9 +12,6 @@ final class AppModel: ObservableObject {
             guard settings != oldValue else { return }
             if settings.zmanim != oldValue.zmanim, pruneOrphans() { return }  // didSet runs again with the pruned settings
             settings.save()
-            if settings.menuBar.showInMenuBar != UserDefaults.standard.bool(forKey: Self.showInMenuBarKey) {
-                UserDefaults.standard.set(settings.menuBar.showInMenuBar, forKey: Self.showInMenuBarKey)
-            }
             invalidate()
             WidgetCenter.shared.reloadAllTimelines()
             if settings.appearance != oldValue.appearance { applyAppearance() }
@@ -58,20 +55,8 @@ final class AppModel: ObservableObject {
     private var todayCache: (key: String, zmanim: [ComputedZman], tomorrow: [ComputedZman])?
     private var lastDayKey = ""
 
-    /// Mirrors settings.menuBar.showInMenuBar for the MenuBarExtra (see MyZmanApp).
-    static let showInMenuBarKey = "showInMenuBar"
-
     private init() {
         settings = AppSettings.load()
-        UserDefaults.standard.set(settings.menuBar.showInMenuBar, forKey: Self.showInMenuBarKey)
-        // ⌘-dragging the item out of the menu bar clears the stored flag: reflect that in the settings.
-        NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let stored = UserDefaults.standard.object(forKey: Self.showInMenuBarKey) as? Bool ?? true
-                if stored != self.settings.menuBar.showInMenuBar { self.settings.menuBar.showInMenuBar = stored }
-            }
-        }
         settings.save()  // refresh the widget's copy
         tick()
         // After sleep or a clock change, a pending tick may be far off: catch up now.
@@ -93,13 +78,6 @@ final class AppModel: ObservableObject {
         enableLaunchAtLoginOnFirstRun()
         showDisclaimerOnFirstRun()
         DispatchQueue.main.async { self.applyAppearance() }
-        // Activate whenever the menu bar popover is shown, so it renders as an active window.
-        NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main) { note in
-            guard let w = note.object as? NSWindow, w.className.contains("MenuBarExtra"),
-                  w.occlusionState.contains(.visible), !NSApp.isActive else { return }
-            NSApp.activate(ignoringOtherApps: true)
-            w.makeKey()
-        }
     }
 
     func applyAppearance() {
@@ -217,7 +195,8 @@ final class AppModel: ObservableObject {
             if let z = today.first(where: { $0.id == id }), let t = z.time, t > date { return z }
             return tomorrow.first { $0.id == id }
         case .next:
-            let upcoming = (today + tomorrow).filter { ($0.time ?? .distantPast) > date }
+            let hidden = Set(settings.menuBar.hiddenZmanim)
+            let upcoming = (today + tomorrow).filter { ($0.time ?? .distantPast) > date && !hidden.contains($0.id) }
             return upcoming.min { $0.time! < $1.time! }
         }
     }
@@ -297,6 +276,7 @@ final class AppModel: ObservableObject {
         var s = settings
         s.reminders.removeAll { $0.kind == .zman && !($0.zmanID.map(ids.contains) ?? false) }
         if let p = s.menuBar.pinnedZman, !ids.contains(p) { s.menuBar.pinnedZman = nil }
+        s.menuBar.hiddenZmanim.removeAll { !ids.contains($0) }
         s.calendarSync.zmanIDs.removeAll { !ids.contains($0) }
         guard s != settings else { return false }
         settings = s

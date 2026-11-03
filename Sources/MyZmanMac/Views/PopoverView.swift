@@ -52,10 +52,7 @@ struct PopoverView: View {
 
     private func openSettings() {
         // Close the menu bar popover first, otherwise it stays on top of the settings window.
-        // (Not the app's own main window, which shows this same view when the menu bar item is off.)
-        let popover = NSApp.windows.first { $0.className.contains("MenuBarExtra") && $0.isVisible }
-            ?? NSApp.keyWindow.flatMap { AppWindows.isManaged($0) ? nil : $0 }
-        popover?.close()
+        StatusBarController.shared.closePopover()
         AppWindows.showSettings()
     }
 }

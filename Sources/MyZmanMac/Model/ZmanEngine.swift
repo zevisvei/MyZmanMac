@@ -74,6 +74,19 @@ enum ZmanEngine {
         }
     }
 
+    /// In order of time; zmanim with no time that day and durations last, in list order. (Stable, so equal
+    /// times keep the user's order.)
+    static func timeOrdered(_ zmanim: [ComputedZman]) -> [ComputedZman] {
+        zmanim.enumerated().sorted { a, b in
+            switch (a.element.time, b.element.time) {
+            case let (x?, y?): x != y ? x < y : a.offset < b.offset
+            case (_?, nil): true
+            case (nil, _?): false
+            case (nil, nil): a.offset < b.offset
+            }
+        }.map(\.element)
+    }
+
     static func time(of item: ZmanItem, on day: Date, settings: AppSettings) -> Date? {
         guard let def = item.def else { return nil }
         return round(compute(def, on: calendar(for: day, settings: settings)).0, def.kind, settings)

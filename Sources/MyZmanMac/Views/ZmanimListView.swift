@@ -7,7 +7,8 @@ struct ZmanimListView: View {
         let s = model.settings
         let date = model.selectedDate
         let isToday = model.isToday(date)
-        let zmanim = isToday ? model.todayZmanim().today : ZmanEngine.zmanim(on: date, settings: s)
+        let computed = isToday ? model.todayZmanim().today : ZmanEngine.zmanim(on: date, settings: s)
+        let zmanim = s.sortByTime ? ZmanEngine.timeOrdered(computed) : computed
         let cal = ZmanEngine.gregorian(model.tz)
         let dayDiff = cal.dateComponents([.day], from: cal.startOfDay(for: Date()), to: cal.startOfDay(for: date)).day ?? 0
         let dayState: ZmanRow.DayState = dayDiff == 0 ? .today : dayDiff < 0 ? .past : .future
@@ -40,7 +41,15 @@ struct ZmanimListView: View {
                         ZmanRow(z: z, now: now, day: dayState, isNext: z.id == nextID)
                     }
                 }
+                .padding(.bottom, 14)   // so the last row clears the fade below
             }
+            // No permanent scroller track ("show scroll bars: always" draws a wide white one); a soft fade at
+            // the bottom shows there's more instead.
+            .scrollIndicators(.never)
+            .mask(VStack(spacing: 0) {
+                Color.black
+                LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 14)
+            })
         }
         .id(model.dayKey(date))
         if s.zmanim.isEmpty {
@@ -116,6 +125,10 @@ private struct ZmanRow: View {
                 if s.menuBar.zmanMode == .pinned && s.menuBar.pinnedZman == z.id {
                     Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary)
                 }
+                if s.menuBar.zmanMode == .next && s.menuBar.hiddenZmanim.contains(z.id) {
+                    Image(systemName: "eye.slash").font(.caption2).foregroundStyle(.tertiary)
+                        .help("לא מוצג בשורת התפריטים")
+                }
                 if s.reminders.contains(where: { $0.zmanID == z.id && $0.enabled }) {
                     Image(systemName: "bell.fill").font(.caption2).foregroundStyle(.secondary)
                 }
@@ -166,11 +179,34 @@ private struct ZmanRow: View {
     @ViewBuilder
     private func menu(isDuration: Bool) -> some View {
         if !isDuration {
-            Button("הצג בשורת התפריטים") {
-                model.settings.menuBar.zmanMode = .pinned
-                model.settings.menuBar.pinnedZman = z.id
+            let mb = model.settings.menuBar
+            let pinned = mb.zmanMode == .pinned && mb.pinnedZman == z.id
+            let hidden = mb.hiddenZmanim.contains(z.id)
+            Menu("שורת התפריטים") {
+                if pinned {
+                    Button("בטל הצמדה (הצג את הזמן הבא)") { model.settings.menuBar.zmanMode = .next }
+                } else {
+                    Button("הצמד זמן זה לשורת התפריטים") {
+                        model.settings.menuBar.zmanMode = .pinned
+                        model.settings.menuBar.pinnedZman = z.id
+                        model.settings.menuBar.hiddenZmanim.removeAll { $0 == z.id }
+                    }
+                }
+                Divider()
+                if hidden {
+                    Button("הצג זמן זה כ„הזמן הבא”") { model.settings.menuBar.hiddenZmanim.removeAll { $0 == z.id } }
+                } else {
+                    Button("אל תציג זמן זה בשורת התפריטים") {
+                        var m = model.settings.menuBar
+                        m.hiddenZmanim.append(z.id)
+                        if pinned { m.zmanMode = .next }
+                        model.settings.menuBar = m   // one change
+                    }
+                }
+                if mb.zmanMode != .next && !pinned {
+                    Button("הצג את הזמן הבא") { model.settings.menuBar.zmanMode = .next }
+                }
             }
-            Button("שורת התפריטים: הזמן הבא") { model.settings.menuBar.zmanMode = .next }
             Divider()
             Menu("תזכורת") {
                 ForEach([0, 5, 10, 15, 30, 60], id: \.self) { m in

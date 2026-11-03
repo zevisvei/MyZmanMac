@@ -91,6 +91,7 @@ struct MonthCalendarView: View {
                 ScrollView {
                     DayEventsSection(date: model.selectedDate, embedded: true)
                 }
+                .scrollIndicators(.never)
                 .frame(maxHeight: 140)
                 Button("זמני היום ←", action: onPick).buttonStyle(.link).font(.caption)
             }

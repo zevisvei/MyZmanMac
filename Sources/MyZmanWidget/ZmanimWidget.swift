@@ -71,7 +71,8 @@ struct WidgetDay {
             return cal.date(byAdding: .day, value: 1, to: now)!
         }()
         info = ZmanEngine.dayInfo(for: hebrewDay, settings: s)
-        today = ZmanEngine.zmanim(on: now, settings: s).filter { $0.item.def?.isDuration == false }
+        let list = ZmanEngine.zmanim(on: now, settings: s).filter { $0.item.def?.isDuration == false }
+        today = s.sortByTime ? ZmanEngine.timeOrdered(list) : list
         upcoming = (today + ZmanEngine.zmanim(on: cal.date(byAdding: .day, value: 1, to: now)!, settings: s)
             .filter { $0.item.def?.isDuration == false })
             .filter { ($0.time ?? .distantPast) > now }
