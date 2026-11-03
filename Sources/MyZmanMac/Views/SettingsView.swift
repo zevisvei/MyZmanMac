@@ -74,8 +74,18 @@ private struct GeneralSettings: View {
                         Text($0.he).tag($0.id)
                     }
                 }
-                Picker("סוף צום", selection: $model.settings.fastEndDefID) {
+                Picker("סוף צום (וספירת העומר)", selection: $model.settings.fastEndDefID) {
                     ForEach(Self.nightfall) { Text($0.he).tag($0.id) }
+                }
+                Picker("סוף תשעה באב", selection: $model.settings.tishaBavEndDefID) {
+                    ForEach(Self.nightfall) { Text($0.he).tag($0.id) }
+                }
+                Picker("נרות חנוכה בימי חול", selection: $model.settings.chanukahAtTzais) {
+                    Text("בשקיעה").tag(false)
+                    Text("בצאת הכוכבים").tag(true)
+                }
+                Picker("נוסח", selection: $model.settings.nusach) {
+                    ForEach(Nusach.allCases) { Text($0.title).tag($0) }
                 }
                 Text("הזמנים האלה מוצגים מעל רשימת הזמנים בימים שבהם הם חלים, ובווידג'ט זמני שבת.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -83,6 +93,17 @@ private struct GeneralSettings: View {
             Section("לימוד ותפילה") {
                 Toggle("הצג שינויים בתפילה (יעלה ויבוא, הלל, תחנון…)", isOn: $model.settings.showTefila)
                 Toggle("הצג דף יומי ירושלמי", isOn: $model.settings.showYerushalmi)
+                Toggle("הצג את ההפטרה (לפי הנוסח שנבחר)", isOn: $model.settings.showHaftara)
+                ForEach(DailyLearning.Cycle.allCases, id: \.self) { c in
+                    Toggle(DailyLearning.title(c), isOn: Binding(
+                        get: { model.settings.learning.contains(c) },
+                        set: { on in
+                            model.settings.learning.removeAll { $0 == c }
+                            if on { model.settings.learning = DailyLearning.Cycle.allCases.filter { $0 == c || model.settings.learning.contains($0) } }
+                        }))
+                }
+                Text("לימוד היום וההפטרה מוצגים בלחיצה על שורת הדף היומי.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("חישוב") {
                 Toggle("חשב לפי גובה המיקום", isOn: $model.settings.useElevation)
@@ -99,12 +120,15 @@ private struct GeneralSettings: View {
                     }
                 if let loginError { Text(loginError).font(.caption).foregroundStyle(.red) }
             }
-            Section("ייצוא ל-Excel (CSV)") {
+            Section("ייצוא לוח זמנים") {
                 DatePicker("מתאריך", selection: $exportFrom, displayedComponents: .date)
                     .environment(\.timeZone, model.tz)
                 DatePicker("עד תאריך", selection: $exportTo, displayedComponents: .date)
                     .environment(\.timeZone, model.tz)
-                Button("ייצא…") { Exporter.exportCSV(from: exportFrom, to: exportTo, settings: model.settings) }
+                HStack {
+                    Button("ל-Excel (CSV)…") { Exporter.exportCSV(from: exportFrom, to: exportTo, settings: model.settings) }
+                    Button("להדפסה (PDF)…") { Exporter.exportPDF(from: exportFrom, to: exportTo, settings: model.settings) }
+                }
             }
             Section {
                 Text(Disclaimer.full)
@@ -463,16 +487,21 @@ private struct ReminderSettings: View {
                     }
                     Stepper(draft.minutesBefore == 0 ? "בזמן עצמו" : "\(draft.minutesBefore) דקות לפני",
                             value: $draft.minutesBefore, in: 0...240, step: 5)
-                } else if draft.kind == .candles {
-                    Stepper(draft.minutesBefore == 0 ? "בזמן ההדלקה" : "\(draft.minutesBefore) דקות לפני ההדלקה",
+                } else if draft.kind.hasOwnDays {
+                    let (at, when): (String, String) = switch draft.kind {
+                    case .candles: ("ההדלקה", "בכל ערב שבת וערב חג, לפי זמן הדלקת הנרות שבהגדרות ← כללי.")
+                    case .havdalah: ("צאת השבת", "במוצאי שבת ובמוצאי חג, לפי צאת השבת שבהגדרות ← כללי.")
+                    default: ("צאת הכוכבים", "בכל לילה מליל ב׳ של פסח עד ערב שבועות, עם הספירה של הלילה. צאת הכוכבים לפי ההגדרות ← כללי.")
+                    }
+                    Stepper(draft.minutesBefore == 0 ? "ב\(at)" : "\(draft.minutesBefore) דקות לפני \(at)",
                             value: $draft.minutesBefore, in: 0...240, step: 5)
-                    Text("בכל ערב שבת וערב חג, לפי זמן הדלקת הנרות שבהגדרות ← כללי.").font(.caption).foregroundStyle(.secondary)
+                    Text(when).font(.caption).foregroundStyle(.secondary)
                 } else {
                     DatePicker("שעה", selection: $time, displayedComponents: .hourAndMinute)
                         .environment(\.timeZone, model.tz)
                 }
 
-                if draft.kind != .candles {
+                if !draft.kind.hasOwnDays {
                 Picker("חזרה", selection: $draft.repeatMode) {
                     ForEach(Reminder.Repeat.allCases) { Text($0.title).tag($0) }
                 }
@@ -501,7 +530,7 @@ private struct ReminderSettings: View {
                     LabeledContent("תאריך") {
                         DateJumpButton(date: Binding(get: { draft.onceDate ?? Date() }, set: { draft.onceDate = $0 }))
                     }
-                case .daily:
+                case .daily, .erevShabbos:
                     EmptyView()
                 }
                 }
@@ -582,7 +611,7 @@ private struct ReminderSettings: View {
         r.hour = c.hour ?? 8
         r.minute = c.minute ?? 0
         if r.repeatMode == .once, r.onceDate == nil { r.onceDate = Date() }
-        if r.kind == .candles { r.repeatMode = .daily }
+        if r.kind.hasOwnDays { r.repeatMode = .daily }
         if let id = editingID, let i = model.settings.reminders.firstIndex(where: { $0.id == id }) {
             model.settings.reminders[i] = r
         } else {

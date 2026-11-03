@@ -6,6 +6,15 @@ import ServiceManagement
 @main
 enum MyZmanApp {
     static func main() {
+        if let i = CommandLine.arguments.firstIndex(of: "--pdf"), i + 1 < CommandLine.arguments.count {
+            MainActor.assumeIsolated {
+                let s = AppModel.shared.settings, start = Date()
+                let end = Calendar.current.date(byAdding: .day, value: 45, to: start)!
+                Exporter.writePDF(Exporter.pdfDays(from: start, to: end, settings: s), settings: s,
+                                  to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
+            }
+            exit(0)
+        }
         if CommandLine.arguments.contains("--dump") { MainActor.assumeIsolated { DebugDump.run() }; exit(0) }
         let app = NSApplication.shared
         let delegate = AppDelegate()
@@ -156,6 +165,10 @@ enum DebugDump {
             f.dateFormat = "yyyy-MM-dd"
             if let d = f.date(from: CommandLine.arguments[i + 1]) { AppModel.shared.selectedDate = d }
         }
+        if tab == PopoverTab.compare.rawValue, AppModel.shared.settings.compareLocations.isEmpty {
+            AppModel.shared.settings.compareLocations = ["New York", "London", "Bnei Brak"]
+                .compactMap { n in Location.builtIn.first { $0.nameEn == n } }
+        }
         DispatchQueue.main.async {
             let root: AnyView = tab?.hasPrefix("settings") == true
                 ? AnyView(SettingsView(initialTab: Int(tab!.dropFirst(8)) ?? 0)
@@ -191,6 +204,16 @@ enum DebugDump {
         let f = ZmanFormat(s)
         print("  ירושלמי: \(info.yerushalmi) | תפילה: \(info.tefila.joined(separator: ", ")) | \(info.molad)")
         for t in SpecialTimes.on(day, settings: s) { print("  * \(t.title): \(f.time(t.time)) (\(t.note))") }
+        let jc = ZmanEngine.jewishCalendar(for: day, settings: s)
+        for sefard in [false, true] {
+            let h = [Haftara.reading(for: jc, sefard: sefard), Haftara.minchaReading(for: jc, sefard: sefard).map { "מנחה: " + $0 }]
+            if h.contains(where: { $0 != nil }) { print("  הפטרה \(sefard ? "ספרד" : "אשכנז"): \(h.compactMap { $0 }.joined(separator: " | "))") }
+        }
+        if args.contains("--learning") {
+            for c in DailyLearning.Cycle.allCases {
+                print("  \(DailyLearning.title(c)): \(DailyLearning.portion(c, on: day, calendar: ZmanEngine.gregorian(s.location.timeZone)))")
+            }
+        }
         if args.contains("--shabbos"), let p = SpecialTimes.nextPeriod(from: day, settings: s) {
             print("  » \(p.title): נרות \(f.localizedDate(p.candles ?? day, template: "EEEdMMM")) \(f.time(p.candles)) · צאת \(f.localizedDate(p.end ?? day, template: "EEEdMMM")) \(f.time(p.end))")
         }
@@ -202,7 +225,8 @@ enum DebugDump {
             var o = Reminder(kind: .time); o.hour = 20; o.repeatMode = .once; o.onceDate = day.addingTimeInterval(3 * 86400); o.label = "פעם אחת"
             let z = Reminder(zmanID: s.zmanim.first { $0.defID == "GetSunset" }!.id, minutesBefore: 15)
             var c = Reminder(kind: .candles); c.minutesBefore = 30
-            s.reminders = [t, o, z, c]
+            var e = Reminder(kind: .time); e.hour = 12; e.repeatMode = .erevShabbos; e.label = "ערב שבת"
+            s.reminders = [t, o, z, c, Reminder(kind: .havdalah), Reminder(kind: .omer), e]
             let f = ZmanFormat(s)
             for p in ReminderScheduler.plan(s, from: day, days: 7) {
                 print("  ⏰ \(f.localizedDate(p.fire, template: "EEEdMMM")) \(f.time(p.fire)) | \(p.title) | \(p.body)")

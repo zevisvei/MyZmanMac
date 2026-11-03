@@ -211,12 +211,29 @@ private struct ZmanRow: View {
             }
             Divider()
             Menu("תזכורת") {
-                ForEach([0, 5, 10, 15, 30, 60], id: \.self) { m in
-                    Button(m == 0 ? "בזמן" : "\(m) דקות לפני") {
-                        var reminders = model.settings.reminders
-                        reminders.removeAll { $0.zmanID == z.id && $0.kind == .zman && $0.repeatMode == .daily }
-                        reminders.append(Reminder(zmanID: z.id, minutesBefore: m))
-                        model.settings.reminders = reminders  // one change, one reschedule
+                Section("כל יום") {
+                    ForEach([0, 5, 10, 15, 30, 60], id: \.self) { m in
+                        Button(m == 0 ? "בזמן" : "\(m) דקות לפני") {
+                            var reminders = model.settings.reminders
+                            reminders.removeAll { $0.zmanID == z.id && $0.kind == .zman && $0.repeatMode == .daily }
+                            reminders.append(Reminder(zmanID: z.id, minutesBefore: m))
+                            model.settings.reminders = reminders  // one change, one reschedule
+                        }
+                    }
+                }
+                // Once, on the day shown (today or another day picked in the popover) – if it's still ahead.
+                if let t = z.time, t > Date() {
+                    Section("פעם אחת – \(model.format.localizedDate(model.selectedDate, template: "EEEdMMM"))") {
+                        ForEach([0, 5, 10, 15, 30, 60], id: \.self) { m in
+                            if t.addingTimeInterval(-Double(m * 60)) > Date() {
+                                Button(m == 0 ? "בזמן" : "\(m) דקות לפני") {
+                                    var r = Reminder(zmanID: z.id, minutesBefore: m)
+                                    r.repeatMode = .once
+                                    r.onceDate = model.selectedDate
+                                    model.settings.reminders.append(r)
+                                }
+                            }
+                        }
                     }
                 }
                 if model.settings.reminders.contains(where: { $0.zmanID == z.id }) {

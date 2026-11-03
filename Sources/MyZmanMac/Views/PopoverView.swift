@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum PopoverTab: String, CaseIterable, Identifiable {
-    case zmanim = "זמנים", calendar = "לוח", converter = "ממיר"
+    case zmanim = "זמנים", calendar = "לוח", compare = "השוואה", converter = "ממיר"
     var id: String { rawValue }
 }
 
@@ -30,6 +30,7 @@ struct PopoverView: View {
                 switch tab {
                 case .zmanim: ZmanimListView()
                 case .calendar: MonthCalendarView(onPick: { tab = .zmanim })
+                case .compare: CompareView()
                 case .converter: ConverterView(onShow: { tab = .zmanim })
                 }
             }
@@ -57,7 +58,7 @@ struct PopoverView: View {
     }
 }
 
-private struct TopBar: View {
+struct TopBar: View {
     @EnvironmentObject var model: AppModel
     let openSettings: () -> Void
 
@@ -69,19 +70,7 @@ private struct TopBar: View {
     var body: some View {
         HStack(spacing: 8) {
             Menu {
-                let s = model.settings
-                if !s.customLocations.isEmpty {
-                    Section("מיקומים שלי") {
-                        ForEach(s.customLocations) { loc in Button(loc.displayName) { model.select(location: loc) } }
-                    }
-                }
-                ForEach(Region.allCases.filter { $0 != .custom }) { region in
-                    Menu(region.title) {
-                        ForEach(Location.builtIn.filter { $0.region == region }.sorted { $0.displayName < $1.displayName }) { loc in
-                            Button(loc.displayName) { model.select(location: loc) }
-                        }
-                    }
-                }
+                LocationMenuItems { model.select(location: $0) }
                 Divider()
                 Button("ניהול מיקומים…", action: openSettings)
             } label: {
@@ -151,10 +140,7 @@ struct DayHeader: View {
             DayNoteLine(date: date, molad: info.molad)
 
             HStack(spacing: 12) {
-                if !info.dafYomi.isEmpty {
-                    Label("דף יומי: \(info.dafYomi)", systemImage: "book.closed")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+                LearningButton(date: date, info: info)
                 if model.settings.showYerushalmi, !info.yerushalmi.isEmpty {
                     Text("ירושלמי: \(info.yerushalmi)").font(.caption).foregroundStyle(.secondary)
                 }
@@ -174,6 +160,62 @@ struct DayHeader: View {
         withAnimation(.easeInOut(duration: 0.15)) {
             model.selectedDate = ZmanEngine.gregorian(model.tz).date(byAdding: .day, value: days, to: model.selectedDate)!
         }
+    }
+}
+
+/// The Daf Yomi on one line; a click shows the rest of the day's learning and the haftara, which
+/// would otherwise make the header's height change from day to day.
+private struct LearningButton: View {
+    @EnvironmentObject var model: AppModel
+    let date: Date
+    let info: DayInfo
+    @ViewState private var shown = false
+
+    var body: some View {
+        let items = learning()
+        Button { shown.toggle() } label: {
+            HStack(spacing: 3) {
+                Label(info.dafYomi.isEmpty ? "לימוד היום" : "דף יומי: \(info.dafYomi)", systemImage: "book.closed")
+                if items.count > 1 { Image(systemName: "chevron.down").imageScale(.small) }
+            }
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        .buttonStyle(.borderless)
+        .disabled(items.count <= 1)
+        .help(items.count > 1 ? "לימוד היום וההפטרה" : "")
+        .popover(isPresented: $shown, arrowEdge: .bottom) {
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
+                ForEach(items, id: \.0) { title, text in
+                    GridRow {
+                        Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Text(text).font(.callout).textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(12)
+            .frame(width: 320)
+            .environment(\.layoutDirection, .rightToLeft)
+        }
+    }
+
+    private func learning() -> [(String, String)] {
+        let s = model.settings
+        var out: [(String, String)] = []
+        if !info.dafYomi.isEmpty { out.append(("דף יומי", info.dafYomi)) }
+        if !info.yerushalmi.isEmpty { out.append(("ירושלמי", info.yerushalmi)) }
+        let cal = ZmanEngine.gregorian(model.tz)
+        for c in s.learning {
+            let text = DailyLearning.portion(c, on: date, calendar: cal)
+            if !text.isEmpty { out.append((DailyLearning.title(c), text)) }
+        }
+        if s.showHaftara {
+            let jc = ZmanEngine.jewishCalendar(for: date, settings: s)
+            let sefard = s.nusach == .sefard
+            if let h = Haftara.reading(for: jc, sefard: sefard) { out.append(("הפטרה", h)) }
+            if let h = Haftara.minchaReading(for: jc, sefard: sefard) { out.append(("הפטרה במנחה", h)) }
+        }
+        return out
     }
 }
 
@@ -282,6 +324,28 @@ struct WrapLayout: Layout {
                 x += size.width + spacing
             }
             y += height + spacing
+        }
+    }
+}
+
+/// The user's locations, then the built-in ones by region – for a location menu.
+struct LocationMenuItems: View {
+    @EnvironmentObject var model: AppModel
+    let pick: (Location) -> Void
+
+    var body: some View {
+        let s = model.settings
+        if !s.customLocations.isEmpty {
+            Section("מיקומים שלי") {
+                ForEach(s.customLocations) { loc in Button(loc.displayName) { pick(loc) } }
+            }
+        }
+        ForEach(Region.allCases.filter { $0 != .custom }) { region in
+            Menu(region.title) {
+                ForEach(Location.builtIn.filter { $0.region == region }.sorted { $0.displayName < $1.displayName }) { loc in
+                    Button(loc.displayName) { pick(loc) }
+                }
+            }
         }
     }
 }

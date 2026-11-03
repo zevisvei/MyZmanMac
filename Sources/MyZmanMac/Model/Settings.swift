@@ -14,24 +14,35 @@ struct Reminder: Codable, Hashable, Identifiable {
         case zman, time
         /// Before candle lighting, on every erev Shabbos / Yom Tov.
         case candles
+        /// At the end of Shabbos / Yom Tov (havdalah).
+        case havdalah
+        /// Sefiras HaOmer at nightfall, with that night's count.
+        case omer
         var id: String { rawValue }
         var title: String {
             switch self {
             case .zman: "לפי זמן"
             case .time: "שעה קבועה"
             case .candles: "הדלקת נרות"
+            case .havdalah: "הבדלה"
+            case .omer: "ספירת העומר"
             }
         }
+        /// Kinds tied to their own days (Shabbos, Yom Tov, the Omer): no repeat choice.
+        var hasOwnDays: Bool { self == .candles || self == .havdalah || self == .omer }
     }
 
     enum Repeat: String, Codable, CaseIterable, Identifiable {
         case daily, weekdays, once
+        /// Only on the eve of Shabbos / Yom Tov.
+        case erevShabbos
         var id: String { rawValue }
         var title: String {
             switch self {
             case .daily: "כל יום"
             case .weekdays: "ימים מסוימים"
             case .once: "פעם אחת"
+            case .erevShabbos: "ערב שבת וחג"
             }
         }
     }
@@ -79,11 +90,16 @@ struct Reminder: Codable, Hashable, Identifiable {
     static let weekdayLetters = ["א׳", "ב׳", "ג׳", "ד׳", "ה׳", "ו׳", "ש׳"]
 
     /// Whether the reminder applies on `day` (a date in the location's calendar).
-    func applies(on day: Date, calendar: Calendar) -> Bool {
+    func applies(on day: Date, settings: AppSettings) -> Bool {
+        if kind.hasOwnDays { return true }   // fireDate picks the days
+        let calendar = ZmanEngine.gregorian(settings.location.timeZone)
         switch repeatMode {
-        case .daily: true
-        case .weekdays: weekdays.contains(calendar.component(.weekday, from: day))
-        case .once: onceDate.map { calendar.isDate($0, inSameDayAs: day) } ?? false
+        case .daily: return true
+        case .weekdays: return weekdays.contains(calendar.component(.weekday, from: day))
+        case .once: return onceDate.map { calendar.isDate($0, inSameDayAs: day) } ?? false
+        case .erevShabbos:
+            let jc = ZmanEngine.jewishCalendar(for: day, settings: settings)
+            return jc.hasCandleLighting() && !jc.isAssurBemelacha()   // the weekday eve, not a first day of Yom Tov
         }
     }
 
@@ -103,13 +119,29 @@ struct Reminder: Codable, Hashable, Identifiable {
             let c = SpecialTimes.candleLighting(on: day, settings)
             guard !c.afterNightfall, let t = c.time else { return nil }
             return t.addingTimeInterval(-Double(minutesBefore * 60))
+        case .havdalah:
+            // The last day of Shabbos / Yom Tov (not the first of two).
+            let jc = ZmanEngine.jewishCalendar(for: day, settings: settings)
+            let tomorrow = ZmanEngine.jewishCalendar(for: cal.date(byAdding: .day, value: 1, to: day)!, settings: settings)
+            guard jc.isAssurBemelacha(), !tomorrow.isAssurBemelacha(), let t = SpecialTimes.havdalah(on: day, settings) else { return nil }
+            return t.addingTimeInterval(-Double(minutesBefore * 60))
+        case .omer:
+            guard Self.omerTonight(day, settings) > 0, let def = ZmanCatalog.def(settings.fastEndDefID) else { return nil }
+            let t = ZmanEngine.round(ZmanEngine.compute(def, on: ZmanEngine.calendar(for: day, settings: settings)).0, .earliest, settings)
+            return t?.addingTimeInterval(-Double(minutesBefore * 60))
         }
+    }
+
+    /// The Omer count of the night after `day` (0 outside the Omer).
+    static func omerTonight(_ day: Date, _ settings: AppSettings) -> Int {
+        let cal = ZmanEngine.gregorian(settings.location.timeZone)
+        return ZmanEngine.jewishCalendar(for: cal.date(byAdding: .day, value: 1, to: day)!, settings: settings).getDayOfOmer()
     }
 
     func title(in settings: AppSettings) -> String {
         if !label.isEmpty { return label }
         if kind == .zman, let name = settings.zmanim.first(where: { $0.id == zmanID })?.name { return name }
-        if kind == .candles { return "הדלקת נרות" }
+        if kind.hasOwnDays { return kind.title }
         return "תזכורת"
     }
 
@@ -126,11 +158,19 @@ struct Reminder: Codable, Hashable, Identifiable {
             parts.append(minutesBefore == 0 ? "בזמן ההדלקה" : "\(minutesBefore) דק׳ לפני ההדלקה")
             parts.append("בכל ערב שבת וחג")
             return parts.joined(separator: " · ")
+        case .havdalah:
+            parts.append(minutesBefore == 0 ? "בצאת השבת והחג" : "\(minutesBefore) דק׳ לפני צאת השבת והחג")
+            return parts.joined(separator: " · ")
+        case .omer:
+            parts.append(minutesBefore == 0 ? "בצאת הכוכבים" : "\(minutesBefore) דק׳ לפני צאת הכוכבים")
+            parts.append("בימי הספירה")
+            return parts.joined(separator: " · ")
         }
         switch repeatMode {
         case .daily: parts.append("כל יום")
         case .weekdays: parts.append(weekdays.sorted().map { Self.weekdayLetters[$0 - 1] }.joined(separator: " "))
         case .once: parts.append(onceDate.map { format.gregorianDate($0) } ?? "—")
+        case .erevShabbos: parts.append("בערבי שבת וחג")
         }
         return parts.joined(separator: " · ")
     }
@@ -152,6 +192,13 @@ enum ZmanRounding: String, Codable, CaseIterable, Identifiable {
         case .truncate: "השמטת השניות"
         }
     }
+}
+
+/// Prayer custom, where it changes what's shown (the haftara, Morid HaTal outside Israel).
+enum Nusach: String, Codable, CaseIterable, Identifiable {
+    case ashkenaz, sefard
+    var id: String { rawValue }
+    var title: String { self == .ashkenaz ? "אשכנז" : "ספרד / עדות המזרח" }
 }
 
 enum AppearanceMode: String, Codable, CaseIterable, Identifiable {
@@ -262,6 +309,8 @@ struct CalendarSyncOptions: Codable, Hashable {
 struct AppSettings: Codable, Hashable {
     var location: Location = .jerusalem
     var customLocations: [Location] = []
+    /// Shown side by side with the current location in the comparison tab.
+    var compareLocations: [Location] = []
     var zmanim: [ZmanItem] = ZmanCatalog.defaults
     var reminders: [Reminder] = []
     var menuBar = MenuBarOptions()
@@ -287,10 +336,18 @@ struct AppSettings: Codable, Hashable {
     /// The catalog zmanim for the start and end of a daytime fast.
     var fastStartDefID = "GetAlos16Point1Degrees"
     var fastEndDefID = "GetTzaisGeonim7Point083Degrees"
+    /// Tisha B'Av's end, which many luachs set later than the minor fasts'.
+    var tishaBavEndDefID = "GetTzaisGeonim7Point083Degrees"
+    /// Chanukah candles on weeknights at nightfall (fastEndDefID's tzais) instead of sunset.
+    var chanukahAtTzais = false
+    var nusach: Nusach = .ashkenaz
     /// Show the Yerushalmi daf next to the Bavli.
     var showYerushalmi = false
     /// Show the day's tefila changes (Ya'aleh Veyavo, Hallel, no Tachanun…).
     var showTefila = true
+    var showHaftara = true
+    /// Daily learning cycles shown beside the Daf Yomi, in this order.
+    var learning: [DailyLearning.Cycle] = []
 
     var inIsrael: Bool { inIsraelOverride ?? location.isInIsrael }
 
@@ -304,6 +361,9 @@ struct AppSettings: Codable, Hashable {
             s.menuBar = MenuBarOptions()
             s.appearance = .system
             s.customLocations = []
+            s.compareLocations = []
+            s.learning = []
+            s.showHaftara = true
             return s
         }
         return shown(self) != shown(other)
@@ -328,6 +388,7 @@ struct AppSettings: Codable, Hashable {
         let d = AppSettings()
         location = (try? c.decode(Location.self, forKey: .location)) ?? d.location
         customLocations = c.lossyArray(Location.self, forKey: .customLocations) ?? d.customLocations
+        compareLocations = c.lossyArray(Location.self, forKey: .compareLocations) ?? d.compareLocations
         zmanim = c.lossyArray(ZmanItem.self, forKey: .zmanim) ?? d.zmanim
         reminders = c.lossyArray(Reminder.self, forKey: .reminders) ?? d.reminders
         menuBar = (try? c.decode(MenuBarOptions.self, forKey: .menuBar)) ?? d.menuBar
@@ -349,6 +410,11 @@ struct AppSettings: Codable, Hashable {
         fastEndDefID = (try? c.decode(String.self, forKey: .fastEndDefID)).flatMap { ZmanCatalog.def($0)?.id } ?? d.fastEndDefID
         showYerushalmi = (try? c.decode(Bool.self, forKey: .showYerushalmi)) ?? d.showYerushalmi
         showTefila = (try? c.decode(Bool.self, forKey: .showTefila)) ?? d.showTefila
+        showHaftara = (try? c.decode(Bool.self, forKey: .showHaftara)) ?? d.showHaftara
+        learning = c.lossyArray(DailyLearning.Cycle.self, forKey: .learning) ?? d.learning
+        tishaBavEndDefID = (try? c.decode(String.self, forKey: .tishaBavEndDefID)).flatMap { ZmanCatalog.def($0)?.id } ?? d.tishaBavEndDefID
+        chanukahAtTzais = (try? c.decode(Bool.self, forKey: .chanukahAtTzais)) ?? d.chanukahAtTzais
+        nusach = (try? c.decode(Nusach.self, forKey: .nusach)) ?? d.nusach
         // The selected location is stored by value: pick up corrections made to the built-in list since.
         if location.region != .custom,
            let fresh = Location.builtIn.first(where: { $0.nameEn == location.nameEn && $0.nameHe == location.nameHe }) {

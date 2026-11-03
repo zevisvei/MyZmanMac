@@ -56,8 +56,9 @@ enum SpecialTimes {
                                        note: note, symbol: "sunrise"))
             }
             if !jc.isYomKippur() && !jc.isTaanisBechoros() {   // the firstborn's fast ends at the seder (or a siyum)
-                out.append(SpecialTime(title: "סוף הצום", time: zman(s.fastEndDefID, on: day, s, kind: .earliest),
-                                       note: ZmanCatalog.def(s.fastEndDefID)?.he ?? "", symbol: "fork.knife"))
+                let end = jc.isTishaBav() ? s.tishaBavEndDefID : s.fastEndDefID
+                out.append(SpecialTime(title: "סוף הצום", time: zman(end, on: day, s, kind: .earliest),
+                                       note: ZmanCatalog.def(end)?.he ?? "", symbol: "fork.knife"))
             }
         }
 
@@ -104,7 +105,8 @@ enum SpecialTimes {
             let (time, note): (Date?, String) = weekday == 6
                 ? (candleLighting(on: day, s).time, "לפני נרות שבת")
                 : weekday == 7 ? (havdalah(on: day, s), "אחרי צאת השבת")
-                : (round(ZmanEngine.sunset(on: day, settings: s), .neutral, s), "בשקיעה; יש המדליקים בצאת הכוכבים")
+                : s.chanukahAtTzais ? (zman(s.fastEndDefID, on: day, s, kind: .earliest), "בצאת הכוכבים")
+                : (round(ZmanEngine.sunset(on: day, settings: s), .neutral, s), "בשקיעה")
             out.append(SpecialTime(title: "נר \(ZmanEngine.formatter.formatHebrewNumber(number: n)) של חנוכה", time: time,
                                    note: note, symbol: "flame.fill"))
         }

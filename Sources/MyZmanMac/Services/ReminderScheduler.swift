@@ -48,7 +48,7 @@ final class ReminderScheduler: NSObject, UNUserNotificationCenterDelegate {
         var result: [Planned] = []
         for offset in 0..<days {
             guard let day = cal.date(byAdding: .day, value: offset, to: now) else { continue }
-            for r in active where r.applies(on: day, calendar: cal) {
+            for r in active where r.applies(on: day, settings: settings) {
                 guard let fire = r.fireDate(on: day, settings: settings), fire > now else { continue }
                 var body: String
                 switch r.kind {
@@ -61,6 +61,14 @@ final class ReminderScheduler: NSObject, UNUserNotificationCenterDelegate {
                 case .candles:
                     let at = fmt.time(fire.addingTimeInterval(Double(r.minutesBefore * 60)))
                     body = r.minutesBefore == 0 ? "הדלקת נרות עכשיו (\(at))" : "הדלקת נרות בעוד \(r.minutesBefore) דקות (\(at))"
+                case .havdalah:
+                    let at = fmt.time(fire.addingTimeInterval(Double(r.minutesBefore * 60)))
+                    body = r.minutesBefore == 0 ? "צאת השבת והחג – הבדלה (\(at))" : "צאת השבת והחג בעוד \(r.minutesBefore) דקות (\(at))"
+                case .omer:
+                    let n = Reminder.omerTonight(day, settings)
+                    let count = ZmanEngine.formatter.formatHebrewNumber(number: n)
+                    body = "הלילה \(count) לעומר"
+                        + (r.minutesBefore == 0 ? "" : " · צאת הכוכבים בעוד \(r.minutesBefore) דקות")
                 }
                 body += " · \(settings.location.displayName)"
                 result.append(Planned(reminder: r, fire: fire, title: r.title(in: settings), body: body))

@@ -178,7 +178,7 @@ enum ZmanEngine {
                        events: events,
                        dafYomi: daf,
                        yerushalmi: yerushalmi,
-                       tefila: tefila(jc),
+                       tefila: tefila(jc, nusach: settings.nusach),
                        molad: molad,
                        isShabbosOrYomTov: jc.getDayOfWeek() == 7 || jc.isYomTovAssurBemelacha())
     }
@@ -188,11 +188,14 @@ extension ZmanEngine {
     private static let rules = TefilaRules()
 
     /// What's different in today's prayers – only the notable changes, not the season's constants.
-    static func tefila(_ jc: JewishCalendar) -> [String] {
+    static func tefila(_ jc: JewishCalendar, nusach: Nusach = .ashkenaz) -> [String] {
         let r = rules
         var out: [String] = []
         if r.isMashivHaruachStartDate(jewishCalendar: jc) { out.append("מתחילים משיב הרוח (מוסף)") }
-        if r.isMashivHaruachEndDate(jewishCalendar: jc) { out.append("מתחילים מוריד הטל (מוסף)") }
+        // Ashkenazim outside Israel don't say Morid HaTal in the summer: for them nothing changes on the 1st of Pesach.
+        if r.isMashivHaruachEndDate(jewishCalendar: jc) {
+            out.append(jc.getInIsrael() || nusach == .sefard ? "מתחילים מוריד הטל (מוסף)" : "מפסיקים משיב הרוח (מוסף)")
+        }
         if r.isVeseinTalUmatarStartingTonight(jewishCalendar: jc) { out.append("מתחילים ותן טל ומטר (ערבית)") }
         if r.isYaalehVeyavoRecited(jewishCalendar: jc) { out.append("יעלה ויבוא") }
         if r.isAlHanissimRecited(jewishCalendar: jc) { out.append("על הניסים") }
