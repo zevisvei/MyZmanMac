@@ -85,6 +85,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
     @objc private func toggle(_ sender: Any?) {
         let now = ProcessInfo.processInfo.systemUptime
+        let e = NSApp.currentEvent
+        log.debug("toggle shown=\(self.popover?.isShown == true, privacy: .public) sinceClose=\(self.closedAt.map { now - $0 } ?? -1, privacy: .public) event=\(e?.type.rawValue ?? 0, privacy: .public) age=\(e.map { now - $0.timestamp } ?? -1, privacy: .public) buttons=\(NSEvent.pressedMouseButtons, privacy: .public)")
         if popover?.isShown == true {
             popover?.performClose(sender)
         } else if let closedAt, now - closedAt < Self.sameClick {
@@ -100,6 +102,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         guard let button = item?.button, let window = button.window else { return }
         let frame = window.convertToScreen(button.convert(button.bounds, to: nil)).insetBy(dx: -2, dy: -4)
         if frame.contains(NSEvent.mouseLocation) { closedAt = ProcessInfo.processInfo.systemUptime }
+        log.debug("willClose onItem=\(self.closedAt != nil, privacy: .public) event=\(NSApp.currentEvent?.type.rawValue ?? 0, privacy: .public) buttons=\(NSEvent.pressedMouseButtons, privacy: .public)")
     }
 
     /// Opens the popover under the menu bar item (e.g. from a widget click). False if there's no item.
