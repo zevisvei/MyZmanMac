@@ -309,6 +309,8 @@ struct CalendarSyncOptions: Codable, Hashable {
 struct AppSettings: Codable, Hashable {
     var location: Location = .jerusalem
     var customLocations: [Location] = []
+    /// Shown first in the location menus.
+    var favoriteLocations: [Location] = []
     /// Shown side by side with the current location in the comparison tab.
     var compareLocations: [Location] = []
     /// Visible sunrise/sunset tables imported from ChaiTables, by VisibleSunriseTable.key of the location.
@@ -363,6 +365,7 @@ struct AppSettings: Codable, Hashable {
             s.menuBar = MenuBarOptions()
             s.appearance = .system
             s.customLocations = []
+            s.favoriteLocations = []
             s.compareLocations = []
             s.learning = []
             s.showHaftara = true
@@ -390,6 +393,7 @@ struct AppSettings: Codable, Hashable {
         let d = AppSettings()
         location = (try? c.decode(Location.self, forKey: .location)) ?? d.location
         customLocations = c.lossyArray(Location.self, forKey: .customLocations) ?? d.customLocations
+        favoriteLocations = c.lossyArray(Location.self, forKey: .favoriteLocations) ?? d.favoriteLocations
         compareLocations = c.lossyArray(Location.self, forKey: .compareLocations) ?? d.compareLocations
         visibleSunrise = (try? c.decode([String: VisibleSunriseTable].self, forKey: .visibleSunrise)) ?? d.visibleSunrise
         zmanim = c.lossyArray(ZmanItem.self, forKey: .zmanim) ?? d.zmanim
@@ -418,7 +422,11 @@ struct AppSettings: Codable, Hashable {
         tishaBavEndDefID = (try? c.decode(String.self, forKey: .tishaBavEndDefID)).flatMap { ZmanCatalog.def($0)?.id } ?? d.tishaBavEndDefID
         chanukahAtTzais = (try? c.decode(Bool.self, forKey: .chanukahAtTzais)) ?? d.chanukahAtTzais
         nusach = (try? c.decode(Nusach.self, forKey: .nusach)) ?? d.nusach
-        // The selected location is stored by value: pick up corrections made to the built-in list since.
+        // Favorites and the selected location are stored by value: pick up corrections made to the built-in list since.
+        favoriteLocations = favoriteLocations.map { fav in
+            guard fav.region != .custom else { return fav }
+            return Location.builtIn.first { $0.nameEn == fav.nameEn && $0.nameHe == fav.nameHe } ?? fav
+        }
         if location.region != .custom,
            let fresh = Location.builtIn.first(where: { $0.nameEn == location.nameEn && $0.nameHe == location.nameHe }) {
             // An imported visible sunrise table is kept by coordinates: move it along with a corrected location.

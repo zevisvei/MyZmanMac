@@ -52,9 +52,11 @@ struct PopoverView: View {
     }
 
     private func openSettings() {
-        // Close the menu bar popover first, otherwise it stays on top of the settings window.
-        StatusBarController.shared.closePopover()
+        // The settings window first, then close the popover (which would otherwise stay on top of it): with the
+        // popover closed first, the app is briefly left with no key window and the system hands the focus to
+        // another app.
         AppWindows.showSettings()
+        StatusBarController.shared.closePopover()
     }
 }
 
@@ -335,9 +337,15 @@ struct LocationMenuItems: View {
 
     var body: some View {
         let s = model.settings
-        if !s.customLocations.isEmpty {
+        if !s.favoriteLocations.isEmpty {
+            Section("מועדפים") {
+                ForEach(s.favoriteLocations) { loc in Button(loc.displayName) { pick(loc) } }
+            }
+        }
+        let custom = s.customLocations.filter { !s.favoriteLocations.contains($0) }
+        if !custom.isEmpty {
             Section("מיקומים שלי") {
-                ForEach(s.customLocations) { loc in Button(loc.displayName) { pick(loc) } }
+                ForEach(custom) { loc in Button(loc.displayName) { pick(loc) } }
             }
         }
         ForEach(Region.allCases.filter { $0 != .custom }) { region in

@@ -96,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 enum AppWindows {
     private static var windows: [String: NSWindow] = [:]
+    static var hasWindows: Bool { !windows.isEmpty }
 
     /// The menu bar popover, or – when the app isn't in the menu bar – the same content in a window.
     static func showApp() {
@@ -126,6 +127,7 @@ enum AppWindows {
             windows[id] = w
             return w
         }()
+        StatusBarController.shared.keepFocus()
         // While a window is open the app is in the Dock and ⌘-Tab, so it can be switched back to.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -169,6 +171,9 @@ enum DebugDump {
             let f = DateFormatter()
             f.dateFormat = "yyyy-MM-dd"
             if let d = f.date(from: CommandLine.arguments[i + 1]) { AppModel.shared.selectedDate = d }
+        }
+        if tab?.hasPrefix("settings") == true, AppModel.shared.settings.favoriteLocations.isEmpty {
+            AppModel.shared.settings.favoriteLocations = ["Bnei Brak", "Ashdod"].compactMap { n in Location.builtIn.first { $0.nameEn == n } }
         }
         if tab == PopoverTab.compare.rawValue, AppModel.shared.settings.compareLocations.isEmpty {
             AppModel.shared.settings.compareLocations = ["New York", "London", "Bnei Brak"]

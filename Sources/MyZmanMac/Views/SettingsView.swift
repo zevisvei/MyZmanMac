@@ -244,7 +244,15 @@ private struct LocationSettings: View {
             VStack(spacing: 6) {
                 TextField("חיפוש עיר", text: $search).textFieldStyle(.roundedBorder)
                 List(results) { loc in
+                    let favorite = model.settings.favoriteLocations.contains(loc)
                     HStack {
+                        Button { toggleFavorite(loc) } label: {
+                            Label(favorite ? "הסר מהמועדפים" : "הוסף למועדפים", systemImage: favorite ? "star.fill" : "star")
+                                .labelStyle(.iconOnly)
+                                .foregroundStyle(favorite ? Color.yellow : Color.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(favorite ? "הסר מהמועדפים" : "הוסף למועדפים – יופיע ראשון בתפריט המיקום")
                         Text(loc.displayName)
                         Spacer()
                         Text(loc.region.title).font(.caption).foregroundStyle(.secondary)
@@ -253,8 +261,12 @@ private struct LocationSettings: View {
                     .contentShape(Rectangle())
                     .onTapGesture { model.select(location: loc); draft = loc }
                     .contextMenu {
+                        Button(favorite ? "הסר מהמועדפים" : "הוסף למועדפים") { toggleFavorite(loc) }
                         if loc.region == .custom {
-                            Button("מחק") { model.settings.customLocations.removeAll { $0 == loc } }
+                            Button("מחק") {
+                                model.settings.customLocations.removeAll { $0 == loc }
+                                model.settings.favoriteLocations.removeAll { $0 == loc }
+                            }
                         }
                     }
                 }
@@ -270,7 +282,7 @@ private struct LocationSettings: View {
                     LabeledContent("גובה", value: "\(Int(l.elevation)) מ׳")
                     LabeledContent("אזור זמן", value: l.timeZoneID)
                 }
-                Section("מיקום מותאם / עריכה") {
+                Section {
                     TextField("שם", text: $draft.nameHe)
                     TextField("קו רוחב", value: $draft.latitude, format: .number.precision(.fractionLength(0...5)))
                     TextField("קו אורך", value: $draft.longitude, format: .number.precision(.fractionLength(0...5)))
@@ -287,12 +299,26 @@ private struct LocationSettings: View {
                             loc.nameEn = loc.nameEn.isEmpty ? loc.nameHe : loc.nameEn
                             model.settings.customLocations.removeAll { $0.displayName == loc.displayName }
                             model.settings.customLocations.append(loc)
+                            // An edited favorite stays a favorite, with its new details.
+                            if let i = model.settings.favoriteLocations.firstIndex(where: {
+                                $0.region == .custom && $0.displayName == loc.displayName
+                            }) {
+                                model.settings.favoriteLocations[i] = loc
+                            }
                             model.select(location: loc)
                         }
                         .disabled(!coordinatesValid)
                         Button(locating ? "מאתר…" : "המיקום הנוכחי שלי") { locate() }.disabled(locating)
                     }
                     if let error { Text(error).font(.caption).foregroundStyle(.red) }
+                } header: {
+                    HStack {
+                        Text("מיקום מותאם / עריכה")
+                        Spacer()
+                        Button { newLocation() } label: { Label("מיקום חדש", systemImage: "plus") }
+                            .buttonStyle(.borderless)
+                            .help("טופס ריק להוספת מיקום חדש")
+                    }
                 }
                 VisibleSunriseSection()
                 Section {
@@ -303,6 +329,21 @@ private struct LocationSettings: View {
             .formStyle(.grouped)
         }
         .onAppear { draft = model.settings.location }
+    }
+
+    private func toggleFavorite(_ loc: Location) {
+        if model.settings.favoriteLocations.contains(loc) {
+            model.settings.favoriteLocations.removeAll { $0 == loc }
+        } else {
+            model.settings.favoriteLocations.append(loc)
+        }
+    }
+
+    private func newLocation() {
+        let here = model.settings.location
+        draft = Location(nameHe: "", nameEn: "", region: .custom, latitude: here.latitude, longitude: here.longitude,
+                         elevation: 0, timeZoneID: here.timeZoneID)
+        error = nil
     }
 
     private var coordinatesValid: Bool {
@@ -325,6 +366,8 @@ private struct VisibleSunriseSection: View {
     @ViewState private var importing = false
     @ViewState private var message: String?
     @ViewState private var failed = false
+    /// The ChaiTables city whose table to open, preset from the selected location.
+    @ViewState private var city = ""
 
     private var key: String {
         VisibleSunriseTable.key(latitude: model.settings.location.latitude, longitude: model.settings.location.longitude)
@@ -338,8 +381,23 @@ private struct VisibleSunriseSection: View {
                                value: "\(range.first) – \(range.last)")
                     .help(table.source)
             }
+            let sefard = model.settings.nusach == .sefard
+            if model.settings.location.region == .israel {
+                Picker("העיר בחי טבלאות", selection: $city) {
+                    Text("בחרו עיר").tag("")
+                    ForEach(ChaiTables.cities, id: \.self) { Text(ChaiTables.displayName($0)).tag($0) }
+                }
+                Button("פתיחת הלוח של העיר באתר") {
+                    NSWorkspace.shared.open(ChaiTables.tableURL(city: city, hebrewYear: ChaiTables.currentHebrewYear(in: model.tz),
+                                                                sefard: sefard))
+                }
+                .disabled(city.isEmpty)
+                .help("פותח בדפדפן את לוח הנץ והשקיעה הנראים של השנה. שומרים את הדף (⌘S) ומייבאים אותו כאן.")
+            } else {
+                Button("פתיחת אתר חי טבלאות") { NSWorkspace.shared.open(ChaiTables.site) }
+            }
             HStack {
-                Button(importing ? "מייבא…" : table == nil ? "ייבוא לוח…" : "ייבוא שנה נוספת…", action: pick)
+                Button(table == nil ? "ייבוא מקובץ…" : "ייבוא שנה נוספת מקובץ…", action: pick)
                     .disabled(importing)
                 if table != nil {
                     Button("מחיקת הלוח") {
@@ -357,13 +415,24 @@ private struct VisibleSunriseSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text("""
-            הלוח הוא למיקום שנבחר כעת בלבד. באתר chaitables.com: „ארץ ישראל (ערים)” ← בוחרים עיר ושנה ← \
-            בסוג הלוח „זריחה ושקיעה הנראים” ← „כן, נא לחשב את הלוחות”, ושומרים את הדף (⌘S). \
+            הלוח נשמר למיקום שנבחר כעת. בארץ: „פתיחת הלוח של העיר באתר” (אם המיקום לא ברשימה, בחרו את העיר הקרובה), \
+            שומרים את הדף שנפתח (⌘S) ומייבאים אותו. בחו״ל: באתר בוחרים מדינה ועיר, ובסוג הלוח „זריחה ושקיעה הנראים”. \
             אפשר גם קובץ ‎.ics מהאתר החדש של חי טבלאות, או CSV עם תאריך לועזי בכל שורה.
             """)
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .onAppear { city = ChaiTables.city(for: model.settings.location) ?? "" }
+        .onChange(of: model.settings.location) { city = ChaiTables.city(for: model.settings.location) ?? "" }
+    }
+
+    private func save(_ t: VisibleSunriseTable, for key: String, place: String) {
+        let isNew = model.settings.visibleSunrise[key] == nil
+        model.settings.visibleSunrise[key] = model.settings.visibleSunrise[key].map { $0.merging(t) } ?? t
+        if isNew, key == self.key { addZmanim() }
+        failed = false
+        let range = t.dateRange.map { " (\($0.first) עד \($0.last))" } ?? ""
+        message = "יובאו \(t.sunrise.count) ימי נץ ו-\(t.sunset.count) ימי שקיעה\(range)\(place.isEmpty ? "" : " – " + place)."
     }
 
     private func shown(_ defID: String) -> Bool { model.settings.zmanim.contains { $0.defID == defID } }
@@ -407,11 +476,8 @@ private struct VisibleSunriseSection: View {
             importing = false
             switch result {
             case .success(let t):
-                let table = model.settings.visibleSunrise[key].map { $0.merging(t) } ?? t
-                model.settings.visibleSunrise[key] = table
-                failed = false
-                let place = t.locationName.isEmpty ? "" : " (\(t.locationName))"
-                message = "יובאו \(t.sunrise.count) ימי נץ ו-\(t.sunset.count) ימי שקיעה\(place). ודאו שהלוח הוא של \(model.settings.location.displayName)."
+                save(t, for: key, place: t.locationName)
+                message = (message ?? "") + " ודאו שהלוח הוא של \(model.settings.location.displayName)."
             case .failure(let error):
                 failed = true
                 message = error.localizedDescription

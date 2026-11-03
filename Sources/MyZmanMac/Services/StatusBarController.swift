@@ -96,7 +96,34 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         }
     }
 
+    /// The app that was in front when the popover opened from the background, to give the focus back to it
+    /// afterwards – unless the popover closed to go to one of our windows (settings) or to another app.
+    private var previousApp: NSRunningApplication?
+    private var restoreFocus = false
+    /// The popover switched the app from regular to a menu bar app while it's open.
+    private var regularAfterClose = false
+
+    /// Our windows (settings, the main window) may be open behind other apps' windows. Activating the app for the
+    /// popover brings them to the front: put them back where they were, below the other app's front window.
+    private func keepWindowsBehind(_ windows: [NSWindow], below app: NSRunningApplication) {
+        guard !windows.isEmpty else { return }
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        guard let front = list.first(where: {
+            ($0[kCGWindowOwnerPID as String] as? pid_t) == app.processIdentifier && ($0[kCGWindowLayer as String] as? Int) == 0
+        })?[kCGWindowNumber as String] as? Int else { return }
+        for w in windows.reversed() { w.order(.below, relativeTo: front) }
+    }
+
+    /// Cancels giving the focus back after the popover closes (a window of ours is being opened from it).
+    func keepFocus() { previousApp = nil }
+
     func popoverWillClose(_ notification: Notification) {
+        // Back to the previous app only when the popover is dismissed (Esc, a click on the menu bar item), not when
+        // it closes because the user clicked into one of our windows.
+        let event = NSApp.currentEvent
+        let intoOurWindow = event.map { [.leftMouseDown, .rightMouseDown].contains($0.type) } == true
+            && event?.window.map { $0.level == .normal && $0.isVisible } == true
+        restoreFocus = !intoOurWindow
         closedAt = nil
         // Only when the popover closes with the mouse over the menu bar item: a press there may be on its way.
         guard let button = item?.button, let window = button.window else { return }
@@ -112,9 +139,25 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         guard let button = item?.button, button.window?.occlusionState.contains(.visible) == true else { return false }
         let popover = self.popover ?? makePopover()
         if !popover.isShown {
+            let front = NSWorkspace.shared.frontmostApplication
+            let fromBackground = !NSApp.isActive && front != nil && front != NSRunningApplication.current
+            previousApp = fromBackground ? front : nil
+            let behind = fromBackground ? NSApp.orderedWindows.filter { $0.isVisible && $0.level == .normal } : []
+            // With a window open the app is a regular one (in the Dock), and activating it would put its menus in
+            // the menu bar for the popover. Opened over another app, the popover belongs to the menu bar, not to
+            // the app: be a menu bar app while it's open (popoverDidClose switches back).
+            if fromBackground, NSApp.activationPolicy() == .regular {
+                NSApp.setActivationPolicy(.accessory)
+                regularAfterClose = true
+            }
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
+            if let front, fromBackground {
+                keepWindowsBehind(behind, below: front)
+                // Activation completes asynchronously and may bring them forward again.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.keepWindowsBehind(behind, below: front) }
+            }
         }
         log.debug("popover shown: \(popover.isShown, privacy: .public)")
         return true
@@ -127,6 +170,18 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
         log.debug("popover closed")
         popover = nil
+        if regularAfterClose {
+            regularAfterClose = false
+            if AppWindows.hasWindows { NSApp.setActivationPolicy(.regular) }
+        }
+        guard restoreFocus, let app = previousApp else { previousApp = nil; return }
+        // Next turn of the run loop: a window opened from the popover (settings) cancels this first, via keepFocus.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.previousApp == app, self.popover == nil, NSApp.isActive else { return }
+            self.previousApp = nil
+            self.log.debug("focus back to \(app.localizedName ?? "?", privacy: .public)")
+            app.activate()
+        }
     }
 
     private func makePopover() -> NSPopover {
