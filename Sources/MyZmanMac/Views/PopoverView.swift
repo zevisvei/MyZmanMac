@@ -16,14 +16,16 @@ struct PopoverView: View {
     var body: some View {
         VStack(spacing: 10) {
             TopBar(openSettings: openSettings)
-            if tab != .calendar {
-                DayHeader(date: model.selectedDate)
-            }
+            // The tabs stay put right under the top bar: the day header below them varies in height
+            // (holidays, tefila, molad) and isn't shown on the calendar tab.
             Picker("", selection: $tab) {
                 ForEach(PopoverTab.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            if tab != .calendar {
+                DayHeader(date: model.selectedDate)
+            }
 
             Group {
                 switch tab {
