@@ -303,8 +303,9 @@ enum DailyLearning {
         let leap = (7 * year + 1) % 19 < 7
 
         // Day of the year as if Cheshvan and Kislev were both 30 days; short months fold the 30th into the 29th.
-        let nominal = [30, 30, 30, 29, 30, 30, 29, 30, 29, 30, 29, 30, 29]
-        let offset = (1..<month).filter { $0 != 6 || leap }.map { nominal[$0 - 1] }.reduce(0, +) + day - 1
+        let nominal: [Int] = [30, 30, 30, 29, 30, 30, 29, 30, 29, 30, 29, 30, 29]
+        var offset: Int = day - 1
+        for m in 1..<month where m != 6 || leap { offset += nominal[m - 1] }
         // The book is learned three times a year, in columns starting
         // 1 Tishrei, 1 Shevat, 1 Sivan (or 1 Tishrei, 11 Shevat, 20 Iyar in a leap year).
         let table = leap ? ccLeap : ccSimple
