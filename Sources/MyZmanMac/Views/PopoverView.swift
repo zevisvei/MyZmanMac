@@ -7,7 +7,6 @@ enum PopoverTab: String, CaseIterable, Identifiable {
 
 struct PopoverView: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.openWindow) private var openWindow
     @ViewState private var tab: PopoverTab
 
     init(initialTab: PopoverTab = .zmanim) {
@@ -52,13 +51,11 @@ struct PopoverView: View {
 
     private func openSettings() {
         // Close the menu bar popover first, otherwise it stays on top of the settings window.
-        let popover = NSApp.windows.first { $0.className.contains("MenuBarExtra") && $0.isVisible } ?? NSApp.keyWindow
+        // (Not the app's own main window, which shows this same view when the menu bar item is off.)
+        let popover = NSApp.windows.first { $0.className.contains("MenuBarExtra") && $0.isVisible }
+            ?? NSApp.keyWindow.flatMap { AppWindows.isManaged($0) ? nil : $0 }
         popover?.close()
-        openWindow(id: "settings")
-        NSApp.activate(ignoringOtherApps: true)
-        DispatchQueue.main.async {
-            NSApp.windows.first { $0.title == "הגדרות זמנים" }?.makeKeyAndOrderFront(nil)
-        }
+        AppWindows.showSettings()
     }
 }
 
@@ -147,11 +144,21 @@ struct DayHeader: View {
             }
 
             FlowChips(items: ([info.parsha] + info.events).filter { !$0.isEmpty })
+            if model.settings.showTefila, !info.tefila.isEmpty {
+                FlowChips(items: info.tefila, tint: .green)
+                    .help("שינויים בתפילת היום (לפי KosherJava; יש לבדוק במנהג המקום)")
+            }
+            if !info.molad.isEmpty {
+                Label(info.molad, systemImage: "moon").font(.caption).foregroundStyle(.secondary)
+            }
 
             HStack(spacing: 12) {
                 if !info.dafYomi.isEmpty {
                     Label("דף יומי: \(info.dafYomi)", systemImage: "book.closed")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+                if model.settings.showYerushalmi, !info.yerushalmi.isEmpty {
+                    Text("ירושלמי: \(info.yerushalmi)").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if !isToday {
@@ -174,16 +181,55 @@ struct DayHeader: View {
 
 struct FlowChips: View {
     let items: [String]
+    var tint: Color = .accentColor
     var body: some View {
         if !items.isEmpty {
-            HStack(spacing: 6) {
+            WrapLayout(spacing: 6) {
                 ForEach(items, id: \.self) { s in
                     Text(s)
                         .font(.caption.weight(.medium))
                         .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                        .background(Capsule().fill(tint.opacity(0.15)))
                 }
             }
+        }
+    }
+}
+
+/// Lays children out in rows, wrapping to the next row when one is full; each row is centered.
+struct WrapLayout: Layout {
+    var spacing: CGFloat = 6
+
+    private func rows(_ subviews: Subviews, width: CGFloat) -> [[(Int, CGSize)]] {
+        var rows: [[(Int, CGSize)]] = [[]], x: CGFloat = 0
+        for (i, v) in subviews.enumerated() {
+            let size = v.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width { rows.append([]); x = 0 }
+            rows[rows.count - 1].append((i, size))
+            x += size.width + spacing
+        }
+        return rows
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        let rows = rows(subviews, width: width)
+        let height = rows.map { $0.map(\.1.height).max() ?? 0 }.reduce(0, +) + spacing * CGFloat(max(0, rows.count - 1))
+        let widest = rows.map { $0.map(\.1.width).reduce(0, +) + spacing * CGFloat(max(0, $0.count - 1)) }.max() ?? 0
+        return CGSize(width: proposal.width ?? widest, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(subviews, width: bounds.width) {
+            let rowWidth = row.map(\.1.width).reduce(0, +) + spacing * CGFloat(max(0, row.count - 1))
+            let height = row.map(\.1.height).max() ?? 0
+            var x = bounds.midX - rowWidth / 2
+            for (i, size) in row {
+                subviews[i].place(at: CGPoint(x: x, y: y + (height - size.height) / 2), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += height + spacing
         }
     }
 }

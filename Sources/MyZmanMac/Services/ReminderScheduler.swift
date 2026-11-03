@@ -14,6 +14,7 @@ final class ReminderScheduler {
     /// macOS keeps at most 64 pending notifications per app.
     private let maxPending = 60
     private var generation = 0
+    private var work: Task<Void, Never>?
 
     func requestAuthorization() async -> Bool {
         (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
@@ -45,6 +46,9 @@ final class ReminderScheduler {
                     body = r.minutesBefore == 0 ? "\(name) – עכשיו (\(at))" : "\(name) בעוד \(r.minutesBefore) דקות (\(at))"
                 case .time:
                     body = fmt.time(fire)
+                case .candles:
+                    let at = fmt.time(fire.addingTimeInterval(Double(r.minutesBefore * 60)))
+                    body = r.minutesBefore == 0 ? "הדלקת נרות עכשיו (\(at))" : "הדלקת נרות בעוד \(r.minutesBefore) דקות (\(at))"
                 }
                 body += " · \(settings.location.displayName)"
                 result.append(Planned(reminder: r, fire: fire, title: r.title(in: settings), body: body))
@@ -57,18 +61,26 @@ final class ReminderScheduler {
         guard available else { return }
         generation += 1
         let gen = generation
-        center.removeAllPendingNotificationRequests()
         let planned = Self.plan(settings, days: daysAhead).prefix(maxPending)
-        guard !planned.isEmpty else { return }
 
-        Task {
-            guard await requestAuthorization(), gen == generation else { return }
+        // Runs after the previous pass has finished, so none of its adds can land after this removal.
+        let previous = work
+        work = Task {
+            await previous?.value
+            guard gen == generation else { return }
+            center.removeAllPendingNotificationRequests()
+            guard !planned.isEmpty, await requestAuthorization(), gen == generation else { return }
             for p in planned {
                 let content = UNMutableNotificationContent()
                 content.title = p.title
                 content.body = p.body
                 content.sound = .default
-                let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: p.fire)
+                // Wall-clock components in a fixed-offset zone: unambiguous in the repeated DST hour,
+                // and still the same moment if the Mac's time zone changes later.
+                var utcCal = Calendar(identifier: .gregorian)
+                utcCal.timeZone = TimeZone(secondsFromGMT: 0)!
+                var comps = utcCal.dateComponents([.year, .month, .day, .hour, .minute, .second], from: p.fire)
+                comps.timeZone = utcCal.timeZone
                 let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
                 let id = "\(p.reminder.id.uuidString)-\(Int(p.fire.timeIntervalSince1970))"
                 guard gen == generation else { return }  // a newer reschedule started

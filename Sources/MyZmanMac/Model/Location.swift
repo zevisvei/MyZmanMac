@@ -34,6 +34,9 @@ struct Location: Codable, Hashable, Identifiable {
 
     var timeZone: TimeZone { TimeZone(identifier: timeZoneID) ?? .current }
 
+    /// Within Jerusalem's municipal area (roughly), where Purim is on 15 Adar.
+    var isJerusalem: Bool { abs(latitude - 31.78) < 0.08 && abs(longitude - 35.21) < 0.1 }
+
     /// Locations in Israel follow the Israeli holiday/parsha schedule by default.
     var isInIsrael: Bool { region == .israel || timeZoneID == "Asia/Jerusalem" }
 

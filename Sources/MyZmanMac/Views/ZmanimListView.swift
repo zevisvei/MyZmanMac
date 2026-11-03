@@ -31,6 +31,7 @@ struct ZmanimListView: View {
             let now = ctx.date
             let nextID = isToday ? model.nextZmanID(at: now) : nil
             ScrollView {
+                SpecialTimesCard(date: date, now: now, isToday: isToday)
                 VStack(spacing: 2) {
                     ForEach(zmanim) { z in
                         ZmanRow(z: z, now: now, day: dayState, isNext: z.id == nextID)
@@ -42,6 +43,37 @@ struct ZmanimListView: View {
         if s.zmanim.isEmpty {
             Text("הרשימה ריקה – הוסיפו זמנים בהגדרות").foregroundStyle(.secondary)
         }
+        }
+    }
+}
+
+/// Candle lighting, the end of Shabbos, fasts, chametz, Chanukah… – only on the days they apply.
+private struct SpecialTimesCard: View {
+    @EnvironmentObject var model: AppModel
+    let date: Date
+    let now: Date
+    let isToday: Bool
+
+    var body: some View {
+        let times = model.specialTimes(date)
+        if !times.isEmpty {
+            VStack(spacing: 3) {
+                ForEach(times) { t in
+                    let past = isToday && (t.time ?? .distantFuture) < now
+                    HStack(spacing: 6) {
+                        Image(systemName: t.symbol).frame(width: 16).foregroundStyle(.orange)
+                        Text(t.title).fontWeight(.medium)
+                        Spacer()
+                        Text(model.format.time(t.time)).monospacedDigit().fontWeight(.semibold)
+                    }
+                    .opacity(past ? 0.5 : 1)
+                    .help(t.note)
+                }
+            }
+            .font(.callout)
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.1)))
+            .padding(.bottom, 4)
         }
     }
 }
@@ -140,8 +172,10 @@ private struct ZmanRow: View {
             Menu("תזכורת") {
                 ForEach([0, 5, 10, 15, 30, 60], id: \.self) { m in
                     Button(m == 0 ? "בזמן" : "\(m) דקות לפני") {
-                        model.settings.reminders.removeAll { $0.zmanID == z.id && $0.kind == .zman && $0.repeatMode == .daily }
-                        model.settings.reminders.append(Reminder(zmanID: z.id, minutesBefore: m))
+                        var reminders = model.settings.reminders
+                        reminders.removeAll { $0.zmanID == z.id && $0.kind == .zman && $0.repeatMode == .daily }
+                        reminders.append(Reminder(zmanID: z.id, minutesBefore: m))
+                        model.settings.reminders = reminders  // one change, one reschedule
                     }
                 }
                 if model.settings.reminders.contains(where: { $0.zmanID == z.id }) {
@@ -155,7 +189,10 @@ private struct ZmanRow: View {
                 let new = CalendarSync.NewEvent(title: z.item.name, start: t, allDay: false, durationMinutes: 15,
                                                 notes: model.settings.location.displayName)
                 let tz = model.tz, target = model.settings.calendarSync.targetCalendarID
-                Task { try? await CalendarSync.shared.add(new, calendarID: target, timeZone: tz) }
+                Task {
+                    do { try await CalendarSync.shared.add(new, calendarID: target, timeZone: tz) }
+                    catch { UserMessage.show("ההוספה ליומן נכשלה: \(error.localizedDescription)") }
+                }
             }
         }
         Button("העתק") {

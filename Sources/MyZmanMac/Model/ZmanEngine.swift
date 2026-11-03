@@ -17,6 +17,9 @@ struct DayInfo: Hashable {
     var parsha: String
     var events: [String]         // holidays, rosh chodesh, omer, special shabbos
     var dafYomi: String
+    var yerushalmi: String       // Daf Yomi Yerushalmi; "" on days without one
+    var tefila: [String]         // changes to the day's prayers: יעלה ויבוא, הלל, אין תחנון…
+    var molad: String            // on Shabbos Mevarchim: the coming month's molad
     var isShabbosOrYomTov: Bool
 }
 
@@ -67,24 +70,49 @@ enum ZmanEngine {
         return settings.zmanim.map { item in
             guard let def = item.def else { return ComputedZman(item: item, time: nil, duration: nil) }
             let (t, d) = compute(def, on: czc)
-            return ComputedZman(item: item, time: t, duration: d)
+            return ComputedZman(item: item, time: round(t, def.kind, settings), duration: d)
         }
     }
 
     static func time(of item: ZmanItem, on day: Date, settings: AppSettings) -> Date? {
         guard let def = item.def else { return nil }
-        return compute(def, on: calendar(for: day, settings: settings)).0
+        return round(compute(def, on: calendar(for: day, settings: settings)).0, def.kind, settings)
+    }
+
+    /// Rounds to the whole minute shown, per the rounding setting. With seconds shown nothing is rounded.
+    static func round(_ t: Date?, _ kind: ZmanDef.Kind, _ settings: AppSettings) -> Date? {
+        guard let t, !settings.showSeconds else { return t }
+        let s = t.timeIntervalSinceReferenceDate / 60
+        let minutes: Double
+        switch (settings.rounding, kind) {
+        case (.truncate, _), (.stringent, .deadline): minutes = s.rounded(.down)
+        case (.stringent, .earliest): minutes = s.rounded(.up)
+        default: minutes = s.rounded()
+        }
+        return Date(timeIntervalSinceReferenceDate: minutes * 60)
     }
 
     static func sunset(on day: Date, settings: AppSettings) -> Date? {
-        calendar(for: day, settings: settings).getSunset()
+        calendar(for: day, settings: settings).getElevationAdjustedSunset()
     }
 
     static func jewishCalendar(for day: Date, settings: AppSettings) -> JewishCalendar {
         let tz = settings.location.timeZone
         let jc = JewishCalendar(workingDate: noon(of: day, in: tz), timezone: tz,
                                 inIsrael: settings.inIsrael, useModernHolidays: settings.useModernHolidays)
+        // Jerusalem keeps Purim on 15 Adar (Al Hanissim etc. follow this).
+        jc.setIsMukafChoma(isMukafChoma: settings.location.isJerusalem)
         return jc
+    }
+
+    /// "ראש חודש אייר". KosherSwift's formatRoshChodesh names the wrong month on the 30th (30 Nisan → ניסן),
+    /// so name the month of the day that starts it instead: on the 30th, that's tomorrow's month.
+    static func roshChodesh(_ jc: JewishCalendar, day: Date, settings: AppSettings) -> String {
+        guard jc.isRoshChodesh() else { return "" }
+        let month = jc.getJewishDayOfMonth() == 30
+            ? jewishCalendar(for: gregorian(settings.location.timeZone).date(byAdding: .day, value: 1, to: day)!, settings: settings)
+            : jc
+        return "ראש חודש " + formatter.formatMonth(jewishCalendar: month)
     }
 
     static let formatter: HebrewDateFormatter = {
@@ -102,8 +130,13 @@ enum ZmanEngine {
         let year = f.formatHebrewNumber(number: jc.getJewishYear() % 1000 == 0 ? jc.getJewishYear() : jc.getJewishYear() % 1000)
 
         var events: [String] = []
-        for s in [f.formatYomTov(jewishCalendar: jc), f.formatRoshChodesh(jewishCalendar: jc),
+        for s in [f.formatYomTov(jewishCalendar: jc), roshChodesh(jc, day: day, settings: settings),
                   f.formatOmer(jewishCalendar: jc), f.formatSpecialParsha(jewishCalendar: jc)] where !s.isEmpty {
+            // formatYomTov writes ל"ג בעומר / ט"ו בשבט with ASCII quotes, formatOmer with gershayim.
+            var s = s.replacingOccurrences(of: "\"", with: "״").replacingOccurrences(of: "'", with: "׳")
+            if jc.getIsMukafChoma() {    // in Jerusalem the 15th is Purim itself
+                if s == "פורים" { s = "פורים דפרזים" } else if s == "שושן פורים" { s = "פורים (שושן פורים)" }
+            }
             if !events.contains(s) { events.append(s) }
         }
         if jc.getDayOfWeek() == 7, jc.isShabbosMevorchim() { events.append("שבת מברכים") }
@@ -116,6 +149,9 @@ enum ZmanEngine {
         let weekday = gregorian(settings.location.timeZone)
             .weekdaySymbols[jc.getDayOfWeek() - 1]
 
+        let yerushalmi = YerushalmiYomiCalculator.getDafYomiYerushalmi(jewishCalendar: jc).map { f.formatDafYomiYerushalmi(daf: $0) } ?? ""
+        let molad = jc.getDayOfWeek() == 7 && jc.isShabbosMevorchim() ? moladText(after: day, settings: settings) : ""
+
         return DayInfo(hebrewDate: "\(dayNum) \(month) \(year)",
                        hebrewDayMonth: "\(dayNum) \(month)",
                        hebrewDayNumber: dayNum,
@@ -123,7 +159,53 @@ enum ZmanEngine {
                        parsha: parsha.isEmpty ? "" : "פרשת \(parsha)",
                        events: events,
                        dafYomi: daf,
+                       yerushalmi: yerushalmi,
+                       tefila: tefila(jc),
+                       molad: molad,
                        isShabbosOrYomTov: jc.getDayOfWeek() == 7 || jc.isYomTovAssurBemelacha())
+    }
+}
+
+extension ZmanEngine {
+    private static let rules = TefilaRules()
+
+    /// What's different in today's prayers – only the notable changes, not the season's constants.
+    static func tefila(_ jc: JewishCalendar) -> [String] {
+        let r = rules
+        var out: [String] = []
+        if r.isMashivHaruachStartDate(jewishCalendar: jc) { out.append("מתחילים משיב הרוח (מוסף)") }
+        if r.isMashivHaruachEndDate(jewishCalendar: jc) { out.append("מתחילים מוריד הטל (מוסף)") }
+        if r.isVeseinTalUmatarStartingTonight(jewishCalendar: jc) { out.append("מתחילים ותן טל ומטר (ערבית)") }
+        if r.isYaalehVeyavoRecited(jewishCalendar: jc) { out.append("יעלה ויבוא") }
+        if r.isAlHanissimRecited(jewishCalendar: jc) { out.append("על הניסים") }
+        if r.isHallelShalemRecited(jewishCalendar: jc) { out.append("הלל שלם") }
+        else if r.isHallelRecited(jewishCalendar: jc) { out.append("חצי הלל") }
+        // Shabbos has no Tachanun anyway; only weekdays are worth noting.
+        if jc.getDayOfWeek() != 7, !jc.isYomTovAssurBemelacha() {
+            let shacharis = r.isTachanunRecitedShacharis(jewishCalendar: jc), mincha = r.isTachanunRecitedMincha(jewishCalendar: jc)
+            if !shacharis { out.append("אין תחנון") } else if !mincha { out.append("אין תחנון במנחה") }
+        }
+        if jc.getDayOfWeek() != 7, !jc.isYomTovAssurBemelacha(), !r.isMizmorLesodaRecited(jewishCalendar: jc) {
+            out.append("אין מזמור לתודה")
+        }
+        return out
+    }
+
+    /// "מולד חודש כסלו: יום ו׳, 13:35 ו-6 חלקים" (traditional Jerusalem time) for the month after `day`.
+    static func moladText(after day: Date, settings: AppSettings) -> String {
+        let tz = settings.location.timeZone
+        // Shabbos Mevarchim is in the last week of the month, so a week later is in the coming month.
+        let next = jewishCalendar(for: gregorian(tz).date(byAdding: .day, value: 8, to: day)!, settings: settings)
+        next.calculateMolad()
+        // The molad's weekday in that same traditional reckoning (Jerusalem mean time).
+        var jerusalem = Calendar(identifier: .gregorian)
+        jerusalem.timeZone = TimeZone(secondsFromGMT: 2 * 3600)!
+        let instant = next.getMoladAsDate().addingTimeInterval(20 * 60 + 56.496)
+        let weekday = jerusalem.component(.weekday, from: instant)
+        let month = formatter.formatMonth(jewishCalendar: next)
+        let chalakim = next.moladChalakim == 0 ? "" : next.moladChalakim == 1 ? " וחלק אחד" : " ו-\(next.moladChalakim) חלקים"
+        return "מולד חודש \(month): יום \(Reminder.weekdayLetters[weekday - 1]), "
+            + String(format: "%d:%02d", next.moladHours, next.moladMinutes) + chalakim
     }
 }
 

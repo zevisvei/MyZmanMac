@@ -15,9 +15,14 @@ final class AppModel: ObservableObject {
             invalidate()
             WidgetCenter.shared.reloadAllTimelines()
             if settings.appearance != oldValue.appearance { applyAppearance() }
-            if settings.reminders != oldValue.reminders || settings.location != oldValue.location
-                || settings.zmanim != oldValue.zmanim || settings.useElevation != oldValue.useElevation
-                || settings.useUSNO != oldValue.useUSNO {
+            // Anything that moves a zman's time (or how it's rounded) moves reminders and synced events.
+            let timesChanged = settings.location != oldValue.location || settings.zmanim != oldValue.zmanim
+                || settings.useElevation != oldValue.useElevation || settings.useUSNO != oldValue.useUSNO
+                || settings.inIsrael != oldValue.inIsrael || settings.rounding != oldValue.rounding
+                || settings.showSeconds != oldValue.showSeconds || settings.candleLightingOffset != oldValue.candleLightingOffset
+                || settings.havdalahDefID != oldValue.havdalahDefID || settings.fastStartDefID != oldValue.fastStartDefID
+                || settings.fastEndDefID != oldValue.fastEndDefID
+            if settings.reminders != oldValue.reminders || timesChanged {
                 ReminderScheduler.shared.reschedule(settings)
             }
             let old = oldValue.calendarSync, new = settings.calendarSync
@@ -25,7 +30,7 @@ final class AppModel: ObservableObject {
                 // Don't leave stale synced zmanim in a calendar we no longer write to.
                 Task { try? await CalendarSync.shared.removeSynced(options: old) }
             }
-            if new != old || settings.location != oldValue.location || settings.zmanim != oldValue.zmanim {
+            if new != old || timesChanged {
                 syncCalendarIfEnabled()
             }
         }
@@ -191,6 +196,18 @@ final class AppModel: ObservableObject {
         let i = ZmanEngine.dayInfo(for: d, settings: settings)
         infoCache[key] = i
         return i
+    }
+
+    private var specialCache: [String: [SpecialTime]] = [:]
+
+    func specialTimes(_ d: Date) -> [SpecialTime] {
+        let key = dayKey(d) + "|\(settings.location.id)|\(settings.inIsrael)|\(settings.useElevation)|\(settings.useUSNO)"
+            + "|\(settings.candleLightingOffset)|\(settings.havdalahDefID)|\(settings.fastStartDefID)|\(settings.fastEndDefID)|\(settings.use24h)|\(settings.showSeconds)|\(settings.rounding)"
+        if let t = specialCache[key] { return t }
+        if specialCache.count > 500 { specialCache.removeAll() }
+        let t = SpecialTimes.on(d, settings: settings)
+        specialCache[key] = t
+        return t
     }
 
     private func buildMenuBarTitle(at date: Date) -> String {

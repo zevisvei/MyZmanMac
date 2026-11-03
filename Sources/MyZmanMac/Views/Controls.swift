@@ -74,3 +74,27 @@ struct ScrollStep: ViewModifier {
 extension View {
     func scrollStep(_ onStep: @escaping (Int) -> Void) -> some View { modifier(ScrollStep(onStep: onStep)) }
 }
+
+/// A short message from an action that has no form of its own to show it in (context menus etc.).
+@MainActor
+enum UserMessage {
+    static func show(_ text: String, title: String = "זמנים") {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.addButton(withTitle: "אישור")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    /// Asks before something that can't be undone. Returns true to go ahead.
+    static func confirm(_ text: String, action: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = text
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: action).hasDestructiveAction = true
+        alert.addButton(withTitle: "ביטול")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+}

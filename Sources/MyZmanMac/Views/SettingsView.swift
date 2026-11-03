@@ -23,6 +23,9 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @EnvironmentObject var model: AppModel
+    private static let nightfall = ZmanCatalog.all.filter {
+        ["GetTzais", "GetBainHasmashosRT", "ZmanGetBeinHashmases"].contains(where: $0.id.hasPrefix)
+    }
     @ViewState private var launchAtLogin = LoginItem.isEnabled
     @ViewState private var loginError: String?
     @ViewState private var exportFrom = Date()
@@ -37,6 +40,13 @@ private struct GeneralSettings: View {
                 .pickerStyle(.segmented)
                 Toggle("שעון 24 שעות", isOn: $model.settings.use24h)
                 Toggle("הצג שניות", isOn: $model.settings.showSeconds)
+                if !model.settings.showSeconds {
+                    Picker("עיגול לדקה", selection: $model.settings.rounding) {
+                        ForEach(ZmanRounding.allCases) { Text($0.title).tag($0) }
+                    }
+                    Text("„לחומרא”: זמן שממנו מותר להתחיל (נץ, צאת הכוכבים, מנחה) מעוגל כלפי מעלה, וזמן אחרון (סוף זמן, שקיעה, הדלקת נרות) כלפי מטה. כך נוהגים רוב הלוחות.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Toggle("צבע לזמנים (אדום – עבר, כחול – עתידי)", isOn: $model.settings.colorPastZmanim)
                 Toggle("התאריך העברי מתחלף בשקיעה", isOn: $model.settings.hebrewDateChangesAtSunset)
             }
@@ -49,6 +59,29 @@ private struct GeneralSettings: View {
                     Text("חוץ לארץ").tag(2)
                 }
                 Toggle("הצג חגים ישראליים מודרניים", isOn: $model.settings.useModernHolidays)
+            }
+            Section("שבת, חגים וצומות") {
+                Picker("הדלקת נרות", selection: $model.settings.candleLightingMinutes) {
+                    Text("לפי המנהג המקומי (\(AppSettings.localCandleLighting(model.settings.location)) דק׳)").tag(Int?.none)
+                    ForEach([15, 18, 20, 22, 25, 30, 40], id: \.self) { Text("\($0) דקות לפני השקיעה").tag(Optional($0)) }
+                }
+                Picker("צאת השבת והחג", selection: $model.settings.havdalahDefID) {
+                    ForEach(Self.nightfall) { Text($0.he).tag($0.id) }
+                }
+                Picker("תחילת צום", selection: $model.settings.fastStartDefID) {
+                    ForEach(ZmanCatalog.all.filter { $0.id.hasPrefix("GetAlos") }) {
+                        Text($0.he).tag($0.id)
+                    }
+                }
+                Picker("סוף צום", selection: $model.settings.fastEndDefID) {
+                    ForEach(Self.nightfall) { Text($0.he).tag($0.id) }
+                }
+                Text("הזמנים האלה מוצגים מעל רשימת הזמנים בימים שבהם הם חלים, ובווידג'ט זמני שבת.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("לימוד ותפילה") {
+                Toggle("הצג שינויים בתפילה (יעלה ויבוא, הלל, תחנון…)", isOn: $model.settings.showTefila)
+                Toggle("הצג דף יומי ירושלמי", isOn: $model.settings.showYerushalmi)
             }
             Section("חישוב") {
                 Toggle("חשב לפי גובה המיקום", isOn: $model.settings.useElevation)
@@ -96,6 +129,13 @@ private struct MenuBarSettings: View {
                 }
                 .padding(.horizontal, 10).padding(.vertical, 4)
                 .background(RoundedRectangle(cornerRadius: 5).fill(.quaternary))
+            }
+            Section {
+                Toggle("הצג בשורת התפריטים", isOn: mb.showInMenuBar)
+                if !model.settings.menuBar.showInMenuBar {
+                    Text("האפליקציה ממשיכה לפעול ברקע בשביל הווידג'טים והתזכורות. כדי לפתוח את חלון הזמנים: לחיצה על ווידג'ט, או פתיחת „זמנים” שוב מתיקיית היישומים או מ-Spotlight.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
             Section("מה להציג") {
                 Toggle("אייקון", isOn: mb.showIcon)
@@ -187,8 +227,9 @@ private struct LocationSettings: View {
                     TextField("קו רוחב", value: $draft.latitude, format: .number.precision(.fractionLength(0...5)))
                     TextField("קו אורך", value: $draft.longitude, format: .number.precision(.fractionLength(0...5)))
                     TextField("גובה (מטרים)", value: $draft.elevation, format: .number)
-                    Picker("אזור זמן", selection: $draft.timeZoneID) {
-                        ForEach(TimeZone.knownTimeZoneIdentifiers, id: \.self) { Text($0).tag($0) }
+                    LabeledContent("אזור זמן") { TimeZoneMenu(selection: $draft.timeZoneID) }
+                    if !coordinatesValid {
+                        Text("קו רוחב בין ‎-90 ל-90, קו אורך בין ‎-180 ל-180.").font(.caption).foregroundStyle(.red)
                     }
                     HStack {
                         Button("שמור ובחר") {
@@ -200,6 +241,7 @@ private struct LocationSettings: View {
                             model.settings.customLocations.append(loc)
                             model.select(location: loc)
                         }
+                        .disabled(!coordinatesValid)
                         Button(locating ? "מאתר…" : "המיקום הנוכחי שלי") { locate() }.disabled(locating)
                     }
                     if let error { Text(error).font(.caption).foregroundStyle(.red) }
@@ -214,6 +256,10 @@ private struct LocationSettings: View {
         .onAppear { draft = model.settings.location }
     }
 
+    private var coordinatesValid: Bool {
+        (-90...90).contains(draft.latitude) && (-180...180).contains(draft.longitude) && (-500...9000).contains(draft.elevation)
+    }
+
     private func locate() {
         locating = true
         error = nil
@@ -221,6 +267,33 @@ private struct LocationSettings: View {
             do { draft = try await locator.currentLocation() } catch { self.error = error.localizedDescription }
             locating = false
         }
+    }
+}
+
+/// Time zones grouped by area (Asia, Europe…), instead of one flat list of ~600.
+private struct TimeZoneMenu: View {
+    @Binding var selection: String
+
+    private static let groups: [(String, [String])] = Dictionary(grouping: TimeZone.knownTimeZoneIdentifiers) {
+        $0.split(separator: "/").first.map(String.init) ?? $0
+    }
+    .sorted { $0.key < $1.key }.map { ($0.key, $0.value.sorted()) }
+
+    var body: some View {
+        Menu(selection) {
+            ForEach(Self.groups, id: \.0) { area, ids in
+                if ids.count == 1 {
+                    Button(ids[0]) { selection = ids[0] }
+                } else {
+                    Menu(area) {
+                        ForEach(ids, id: \.self) { id in
+                            Button(id.dropFirst(area.count + 1).replacingOccurrences(of: "_", with: " ")) { selection = id }
+                        }
+                    }
+                }
+            }
+        }
+        .fixedSize()
     }
 }
 
@@ -339,11 +412,16 @@ private struct ReminderSettings: View {
                     }
                     Stepper(draft.minutesBefore == 0 ? "בזמן עצמו" : "\(draft.minutesBefore) דקות לפני",
                             value: $draft.minutesBefore, in: 0...240, step: 5)
+                } else if draft.kind == .candles {
+                    Stepper(draft.minutesBefore == 0 ? "בזמן ההדלקה" : "\(draft.minutesBefore) דקות לפני ההדלקה",
+                            value: $draft.minutesBefore, in: 0...240, step: 5)
+                    Text("בכל ערב שבת וערב חג, לפי זמן הדלקת הנרות שבהגדרות ← כללי.").font(.caption).foregroundStyle(.secondary)
                 } else {
                     DatePicker("שעה", selection: $time, displayedComponents: .hourAndMinute)
                         .environment(\.timeZone, model.tz)
                 }
 
+                if draft.kind != .candles {
                 Picker("חזרה", selection: $draft.repeatMode) {
                     ForEach(Reminder.Repeat.allCases) { Text($0.title).tag($0) }
                 }
@@ -375,11 +453,15 @@ private struct ReminderSettings: View {
                 case .daily:
                     EmptyView()
                 }
+                }
 
                 TextField("כותרת (לא חובה)", text: $draft.label)
 
                 HStack {
                     if editingID != nil { Button("ביטול") { reset() } }
+                    if isPastOnce {
+                        Text("המועד הזה כבר עבר – התזכורת לא תופיע.").font(.caption).foregroundStyle(.red)
+                    }
                     Spacer()
                     Button(editingID == nil ? "הוסף תזכורת" : "שמור שינויים", action: save)
                         .keyboardShortcut(.defaultAction)
@@ -413,8 +495,21 @@ private struct ReminderSettings: View {
         switch (draft.kind, draft.repeatMode) {
         case (.zman, _) where draft.zmanID == nil: false
         case (_, .weekdays) where draft.weekdays.isEmpty: false
+        case (_, .once) where isPastOnce: false
         default: true
         }
+    }
+
+    /// A one-time reminder whose moment has already passed would never fire.
+    private var isPastOnce: Bool {
+        guard draft.repeatMode == .once else { return false }
+        var r = draft
+        let c = ZmanEngine.gregorian(model.tz).dateComponents([.hour, .minute], from: time)
+        r.hour = c.hour ?? 8
+        r.minute = c.minute ?? 0
+        let day = ZmanEngine.noon(of: r.onceDate ?? Date(), in: model.tz)
+        guard let fire = r.fireDate(on: day, settings: model.settings) else { return r.kind == .zman && r.zmanID != nil }
+        return fire <= Date()
     }
 
     private func edit(_ r: Reminder) {
@@ -436,6 +531,7 @@ private struct ReminderSettings: View {
         r.hour = c.hour ?? 8
         r.minute = c.minute ?? 0
         if r.repeatMode == .once, r.onceDate == nil { r.onceDate = Date() }
+        if r.kind == .candles { r.repeatMode = .daily }
         if let id = editingID, let i = model.settings.reminders.firstIndex(where: { $0.id == id }) {
             model.settings.reminders[i] = r
         } else {
@@ -490,6 +586,7 @@ private struct CalendarSettings: View {
                 Stepper("ימים קדימה: \(model.settings.calendarSync.daysAhead)", value: o.daysAhead, in: 7...365, step: 7)
                 Toggle("תאריך עברי (אירוע של יום שלם)", isOn: o.includeHebrewDate)
                 Toggle("חגים, ראש חודש, ספירת העומר ופרשת השבוע", isOn: o.includeEvents)
+                Toggle("זמנים מיוחדים: הדלקת נרות, צאת שבת וחג, צומות, חמץ", isOn: o.includeSpecialTimes)
                 Picker("התראה לזמנים", selection: o.alertMinutes) {
                     Text("ללא").tag(Int?.none)
                     ForEach([0, 5, 10, 15, 30], id: \.self) { Text($0 == 0 ? "בזמן" : "\($0) דק׳ לפני").tag(Optional($0)) }
@@ -508,10 +605,16 @@ private struct CalendarSettings: View {
             Section {
                 HStack {
                     Button("סנכרן עכשיו") { run { try await sync.sync(model.settings, options: model.settings.calendarSync) } }
-                    Button("ייצוא לקובץ ‎.ics…") { sync.exportICS(model.settings, options: model.settings.calendarSync) }
+                    Button("ייצוא לקובץ ‎.ics…") {
+                        do { try sync.exportICS(model.settings, options: model.settings.calendarSync) }
+                        catch { status = "הייצוא נכשל: \(error.localizedDescription)" }
+                    }
                     Spacer()
                     Button("הסר את מה שסונכרן", role: .destructive) {
-                        run { try await sync.removeSynced(options: model.settings.calendarSync); return 0 }
+                        // Turn the auto-sync off too, or it would write everything again at the next day rollover.
+                        let options = model.settings.calendarSync
+                        model.settings.calendarSync.enabled = false
+                        run { try await sync.removeSynced(options: options); return 0 }
                     }
                 }
                 .disabled(busy)

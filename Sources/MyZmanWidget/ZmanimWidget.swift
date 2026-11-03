@@ -37,6 +37,11 @@ struct ZmanimProvider: TimelineProvider {
         var times = (ZmanEngine.zmanim(on: now, settings: settings) + ZmanEngine.zmanim(on: tomorrow, settings: settings))
             .compactMap(\.time).filter { $0 > now }
         if let sunset = ZmanEngine.sunset(on: now, settings: settings), sunset > now { times.append(sunset) }
+        // The Shabbos widget moves on to next week once Shabbos is out.
+        if let def = ZmanCatalog.def(settings.havdalahDefID),
+           let out = ZmanEngine.compute(def, on: ZmanEngine.calendar(for: now, settings: settings)).0, out > now {
+            times.append(out)
+        }
         let midnight = cal.startOfDay(for: tomorrow)
         times.append(midnight)
         let entries = [ZmanimEntry(date: now, settings: settings)]
@@ -78,6 +83,8 @@ private extension View {
     func widgetStyle() -> some View {
         environment(\.layoutDirection, .rightToLeft)
             .containerBackground(.background, for: .widget)
+            // Clicking a widget opens the app (its window when it's hidden from the menu bar).
+            .widgetURL(URL(string: "myzman://open"))
     }
 }
 
@@ -223,7 +230,7 @@ struct ShabbatWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "Shabbat", provider: ZmanimProvider()) { ShabbatView(day: WidgetDay($0)).widgetStyle() }
             .configurationDisplayName("זמני שבת")
-            .description("הדלקת נרות וצאת השבת הקרובה, והפרשה.")
+            .description("הדלקת נרות וצאת השבת או החג הקרובים.")
             .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
@@ -233,36 +240,41 @@ struct ShabbatView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        let cal = day.cal
-        // The coming Friday (today if it's Friday; Shabbos itself counts the Friday before).
-        let weekday = cal.component(.weekday, from: day.now)
-        let toFriday = weekday == 7 ? -1 : (6 - weekday + 7) % 7
-        let friday = cal.date(byAdding: .day, value: toFriday, to: day.now)!
-        let shabbos = cal.date(byAdding: .day, value: 1, to: friday)!
-        // Customary candle-lighting offsets: Jerusalem 40, Haifa 30, else 18 minutes before sunset.
-        let name = day.s.location.nameEn.lowercased()
-        let offset: Double = name.contains("jerusalem") ? 40 : name.contains("haifa") ? 30 : 18
-        let candles = ZmanEngine.calendar(for: friday, settings: day.s).myzCandleLighting(offset)
-        let czcShabbos = ZmanEngine.calendar(for: shabbos, settings: day.s)
-        let havdalah = czcShabbos.getTzaisGeonim8Point5Degrees()
-        let rt = czcShabbos.getTzais72()
-        let info = ZmanEngine.dayInfo(for: shabbos, settings: day.s)
+        // The coming Shabbos or Yom Tov – the current one until it's out.
+        let p = SpecialTimes.nextPeriod(from: day.now, settings: day.s)
+        let info = p.map { ZmanEngine.dayInfo(for: $0.firstDay, settings: day.s) }
+        let endDay = p?.end.map { ZmanEngine.noon(of: $0, in: day.s.location.timeZone) }
+        let rt = endDay.flatMap { ZmanEngine.calendar(for: $0, settings: day.s).getTzais72() }
+        // Days are worth naming when it isn't a plain Friday-to-Shabbos.
+        let showDays = p.map { day.cal.component(.weekday, from: $0.firstDay) != 7 || endDay.map { !day.cal.isDate($0, inSameDayAs: p!.firstDay) } == true } ?? false
 
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("שבת").font(.headline)
-                if !info.parsha.isEmpty { Text(info.parsha).font(.subheadline).foregroundStyle(.secondary).lineLimit(1) }
+                Text(p?.title ?? "שבת").font(.headline).lineLimit(1)
+                if let parsha = info?.parsha, !parsha.isEmpty, p?.title == "שבת" {
+                    Text(parsha).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                }
                 Spacer()
             }
             Text(day.s.location.displayName).font(.caption2).foregroundStyle(.secondary)
             Spacer(minLength: 2)
-            row("🕯️ הדלקת נרות", day.fmt.time(candles))
-            row("✨ צאת השבת", day.fmt.time(havdalah))
+            row("🕯️ הדלקת נרות", value(p?.candles, showDays))
+            row("✨ \(p?.title == "שבת" ? "צאת השבת" : "צאת החג")", value(p?.end, showDays))
             if family == .systemMedium {
                 row("ר״ת", day.fmt.time(rt))
-                Text("נרות \(Int(offset)) דק׳ לפני השקיעה · צאת השבת 8.5°").font(.system(size: 9)).foregroundStyle(.tertiary)
+                Text("נרות \(day.s.candleLightingOffset) דק׳ לפני השקיעה · צאת: \(havdalahDef.he)").font(.system(size: 9)).foregroundStyle(.tertiary)
+                    .lineLimit(1)
             }
         }
+    }
+
+    private func value(_ d: Date?, _ withDay: Bool) -> String {
+        guard let d, withDay else { return day.fmt.time(d) }
+        return "\(Reminder.weekdayLetters[day.cal.component(.weekday, from: d) - 1]) \(day.fmt.time(d))"
+    }
+
+    private var havdalahDef: ZmanDef {
+        ZmanCatalog.def(day.s.havdalahDefID) ?? ZmanCatalog.def("GetTzaisGeonim8Point5Degrees")!
     }
 
     private func row(_ title: String, _ value: String) -> some View {

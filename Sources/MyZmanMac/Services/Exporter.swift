@@ -28,7 +28,10 @@ enum Exporter {
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         // UTF-8 BOM so Excel shows the Hebrew correctly.
-        try? Data(("\u{FEFF}" + csv).utf8).write(to: url)
+        do { try Data(("\u{FEFF}" + csv).utf8).write(to: url) } catch {
+            UserMessage.show("הייצוא נכשל: \(error.localizedDescription)")
+            return
+        }
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 

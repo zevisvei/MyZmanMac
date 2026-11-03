@@ -13,6 +13,7 @@ set -euo pipefail
 APP="${1:-/Applications/MyZman.app}"
 WEX="$APP/Contents/PlugIns/MyZmanWidget.appex"
 [[ -d "$WEX" ]] || { echo "✗ לא נמצא $APP – התקינו את MyZman קודם."; exit 1; }
+[[ -w "$APP" && -w "$APP/Contents" ]] || { echo "✗ אין הרשאת כתיבה ל-$APP (העבירו את האפליקציה לתיקיית היישומים שלכם)."; exit 1; }
 
 pick_identity() {
   local ids m
@@ -33,6 +34,8 @@ if [[ -z "$IDENTITY" ]]; then
   LEGACY=(); openssl version | grep -q "^OpenSSL 3" && LEGACY=(-legacy)
   openssl pkcs12 -export "${LEGACY[@]}" -inkey "$TMP/key.pem" -in "$TMP/cert.pem" -out "$TMP/id.p12" \
     -passout pass:"$PW" -name "MyZman Local Signing"
+  # -A (any app may use the key) avoids a Keychain prompt in the one-click flow. Acceptable for this
+  # throwaway local key, which only ever signs this Mac's own copy; the release key never gets it.
   security import "$TMP/id.p12" -k "$HOME/Library/Keychains/login.keychain-db" -P "$PW" -T /usr/bin/codesign -A >/dev/null
   rm -rf "$TMP"
   IDENTITY="MyZman Local Signing"
@@ -63,6 +66,8 @@ cat > "$ENT/app.plist" <<ENTS
 ENTS
 
 pkill -x MyZman 2>/dev/null || true
+# Whatever happens from here on, don't leave the app closed.
+trap 'open "$APP"' EXIT
 xattr -d com.apple.quarantine "$APP" 2>/dev/null || true
 codesign --force --options runtime --sign "$IDENTITY" --entitlements "$ENT/widget.plist" "$WEX"
 codesign --force --options runtime --sign "$IDENTITY" --entitlements "$ENT/app.plist" "$APP"
@@ -72,7 +77,6 @@ rm -rf "$ENT"
 pluginkit -a "$WEX" 2>/dev/null || true
 pluginkit -e use -i com.myzman.mac.widget 2>/dev/null || true
 killall chronod 2>/dev/null || true
-open "$APP"
 
 echo "✓ מוכן. לחיצה ימנית על שולחן העבודה ← „עריכת ווידג'טים” ← חפשו „זמנים”."
 echo "  (ייתכן שתתבקשו לאשר שוב גישה ליומן ולמיקום, כי החתימה השתנתה.)"

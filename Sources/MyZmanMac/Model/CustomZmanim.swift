@@ -8,9 +8,10 @@ extension ComplexZmanimCalendar {
         date.map { $0.addingTimeInterval(minutes * 60) }
     }
 
-    func myzMisheyakir50() -> Date? { offset(getSunrise(), minutes: -50) }
+    func myzMisheyakir50() -> Date? { offset(getElevationAdjustedSunrise(), minutes: -50) }
 
-    func myzCandleLighting(_ minutes: Double) -> Date? { offset(getSunset(), minutes: -minutes) }
+    /// Like KosherJava's getCandleLighting(), counted from sea-level sunset whatever the elevation setting.
+    func myzCandleLighting(_ minutes: Double) -> Date? { offset(getSeaLevelSunset(), minutes: -minutes) }
 
     func myzSunriseBaalHatanya() -> Date? { getSunriseOffsetByDegrees(offsetZenith: 90 + 1.583) }
 
@@ -32,7 +33,7 @@ extension ComplexZmanimCalendar {
     }
 
     func myzBeinHashmashos8Point5Degrees5Point3() -> Date? {
-        guard let tzais = getTzaisGeonim8Point5Degrees(), let sunset = getSunset() else { return nil }
+        guard let tzais = getTzaisGeonim8Point5Degrees(), let sunset = getElevationAdjustedSunset() else { return nil }
         let span = tzais.timeIntervalSince(sunset)
         return tzais.addingTimeInterval(-span / 5.3333)
     }

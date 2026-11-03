@@ -21,8 +21,8 @@ struct MonthCalendarView: View {
         let dates = (0..<days).map { cal.date(byAdding: .day, value: $0, to: monthStart)! }
         let mid = model.dayInfo(dates[14])
         let _ = CalendarSync.shared.version
-        let busyDays = Set(CalendarSync.shared.userEvents(from: monthStart, to: cal.date(byAdding: .day, value: days, to: monthStart)!,
-                                                          options: model.settings.calendarSync).map { model.dayKey($0.start) })
+        let busyDays = Set(CalendarSync.shared.busyDays(from: monthStart, to: cal.date(byAdding: .day, value: days, to: monthStart)!,
+                                                        tz: model.tz, options: model.settings.calendarSync).map { model.dayKey($0) })
         let monthTitle = mid.hebrewDate.split(separator: " ").dropFirst().joined(separator: " ")
         let greg = "\(model.format.localizedDate(dates.first!, template: "MMM")) – \(model.format.localizedDate(dates.last!, template: "MMMyyyy"))"
 
@@ -150,17 +150,18 @@ struct MonthCalendarView: View {
     private func computeUpcomingEvents(from date: Date) -> [Entry] {
         let cal = ZmanEngine.gregorian(model.tz)
         var result: [Entry] = []
-        var last = ""
+        var last: Set<String> = []
         for i in 0..<385 {
             let d = cal.date(byAdding: .day, value: i, to: date)!
             let events = model.dayInfo(d).events.filter { !$0.contains("עומר") && $0 != "שבת מברכים" }
-            let title = events.joined(separator: " · ")
-            // Collapse multi-day runs like the eight days of Chanukah into their first day.
-            let key = title.replacingOccurrences(of: #"^\S+ (?=חנוכה)"#, with: "", options: .regularExpression)
-            if !title.isEmpty, key != last {
-                result.append(Entry(title: "\(title) – \(model.format.gregorianDate(d, style: "d/M"))", date: d))
+            // Collapse multi-day runs (the eight days of Chanukah, two-day Rosh Chodesh) into their first day:
+            // list only the events that weren't there the day before.
+            let keys = events.map { $0.replacingOccurrences(of: #"^\S+ (?=חנוכה)"#, with: "", options: .regularExpression) }
+            let fresh = zip(events, keys).filter { !last.contains($0.1) }.map(\.0)
+            if !fresh.isEmpty {
+                result.append(Entry(title: "\(fresh.joined(separator: " · ")) – \(model.format.gregorianDate(d, style: "d/M"))", date: d))
             }
-            last = key
+            last = Set(keys)
         }
         return result
     }

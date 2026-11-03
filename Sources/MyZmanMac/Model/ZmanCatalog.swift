@@ -16,6 +16,20 @@ struct ZmanDef: Identifiable {
     let enInfo: String
     let calc: Calc
 
+    /// Which way rounding to the minute is stringent for this zman.
+    enum Kind { case earliest, deadline, neutral }
+
+    var kind: Kind {
+        let earliest = ["GetMisheyakir", "ZmanGetMisheyakir", "GetSunrise", "GetSeaLevelSunrise", "GetTzais",
+                        "GetBainHasmashosRT", "ZmanGetBeinHashmases", "GetMinchaGedola", "GetMinchaKetana", "GetTchilasZmanKidushLevana"]
+        let deadline = ["GetSofZman", "GetSunset", "GetSeaLevelSunset", "GetCandleLighting", "ZmanGetCandleLighting",
+                        "GetBainHasmashosYereim", "GetSamuchLeMinchaKetana", "GetSolarMidnight"]
+        // Alos both starts the day and ends the night, chatzos and plag serve both ways: nearest.
+        if earliest.contains(where: id.hasPrefix) { return .earliest }
+        if deadline.contains(where: id.hasPrefix) { return .deadline }
+        return .neutral
+    }
+
     var isDuration: Bool {
         if case .duration = calc { return true }
         return false
@@ -23,6 +37,24 @@ struct ZmanDef: Identifiable {
 }
 
 enum ZmanCatalog {
+    /// MyZman's 166 calculations, then the ones this app adds (ZmanCatalog+Extra).
+    static let all = myZman.map(withKosherJavaNote) + extra
+
+    /// Zmanim KosherJava 3 dropped or replaced as too early; kept (users may have them in their list), but labelled.
+    private static let superseded: [String: String] = [
+        "GetTzaisGeonim3Point65Degrees": "KosherJava 3 הסירה את הזמן הזה: הוא מוקדם מ-13.5 דקות בירושלים בשוויון.",
+        "GetTzaisGeonim3Point676Degrees": "KosherJava 3 הסירה את הזמן הזה: הוא מוקדם מ-13.5 דקות בירושלים בשוויון.",
+        "GetTzaisGeonim4Point37Degrees": "KosherJava 3 החליפה את הזמן הזה ב-4.42 מעלות (16⅞ דקות), כי 4.37 מוקדם מדי.",
+        "GetTzaisGeonim4Point61Degrees": "KosherJava 3 החליפה את הזמן הזה ב-4.66 מעלות (18 דקות), כי 4.61 מוקדם מדי.",
+        "GetTzaisGeonim5Point88Degrees": "KosherJava 3 הסירה את הזמן הזה כמוקדם מעט מדי.",
+    ]
+
+    private static func withKosherJavaNote(_ d: ZmanDef) -> ZmanDef {
+        guard let note = superseded[d.id] else { return d }
+        return ZmanDef(id: d.id, he: d.he + " (הוחלף)", en: d.en + " (superseded)", heInfo: d.heInfo + "\n\n⚠︎ " + note,
+                       enInfo: d.enInfo + "\n\n⚠︎ Removed/replaced as too early in KosherJava 3.", calc: d.calc)
+    }
+
     private static let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
 
     static func def(_ id: String) -> ZmanDef? { byID[id] }

@@ -32,7 +32,8 @@ else
     -out "$P12" -passout pass:"$PW" -name "$NAME"
   rm -f "$DIR/key.pem" "$DIR/cs.cnf"
   chmod 600 "$P12" "$PWFILE"
-  security import "$P12" -k "$HOME/Library/Keychains/login.keychain-db" -P "$PW" -T /usr/bin/codesign -A
+  # Only codesign may use the key (no -A): this key signs every release. Keychain asks once; choose "Always Allow".
+  security import "$P12" -k "$HOME/Library/Keychains/login.keychain-db" -P "$PW" -T /usr/bin/codesign
   echo "✓ נוצרה התעודה '$NAME' ויובאה ל-Keychain."
 fi
 

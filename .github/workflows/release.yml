@@ -50,9 +50,16 @@ jobs:
 
       - name: Check calculations
         run: |
-          .build/apple/Products/Release/MyZmanMac --dump 2026-11-02 Jerusalem | tee dump.txt
+          BIN="$(cat build/products-dir)/MyZmanMac"
+          "$BIN" --dump 2026-11-02 Jerusalem | tee dump.txt
           grep -q "כ״ב חשון תשפ״ז" dump.txt
           grep -q "בכורות מ״ה" dump.txt
+          # Sea-level sunrise (elevation off by default; 05:56:xx, rounded up "lechumra") and candle lighting
+          # from sea-level sunset (raw --all values are truncated).
+          grep -q "  נץ: 05:57" dump.txt
+          "$BIN" --dump 2026-06-21 Jerusalem --all | grep -q "\[GetCandleLighting\] 19:29"
+          # Eilat is on Israel time (it once had Jordan's, an hour off in winter).
+          "$BIN" --dump 2026-12-21 Eilat | grep -q "  נץ: 06:31"
 
       - name: Package
         run: |

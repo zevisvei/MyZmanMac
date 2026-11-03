@@ -6,14 +6,21 @@ cd "$(dirname "$0")/.."
 
 APP=build/MyZman.app
 VERSION="${VERSION:-1.0.0}"
+# Must increase with every build so macOS (and the widget system) picks up the new one.
+BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
 
+mkdir -p build
 echo "› Compiling…"
-if swift build -c release --arch arm64 --arch x86_64 >/dev/null 2>&1; then
-  OUT=.build/apple/Products/Release
+UNIVERSAL=(-c release --arch arm64 --arch x86_64)
+if swift build "${UNIVERSAL[@]}" >build/universal.log 2>&1; then
+  # .build/apple/… with older toolchains, .build/out/… with newer ones.
+  OUT=$(swift build "${UNIVERSAL[@]}" --show-bin-path)
 else
+  echo "! Universal build failed (see build/universal.log) – building for this Mac only."
   swift build -c release
   OUT=.build/release
 fi
+print -r -- "$OUT" > build/products-dir  # for CI, which runs the built binary
 
 echo "› Assembling $APP"
 rm -rf "$APP"
@@ -41,7 +48,7 @@ cat > "$WEX/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>MyZmanWidget</string>
   <key>CFBundlePackageType</key><string>XPC!</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSExtension</key>
   <dict>
@@ -81,11 +88,16 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
   <key>CFBundleDevelopmentRegion</key><string>he</string>
   <key>CFBundleLocalizations</key><array><string>he</string></array>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
+  <key>CFBundleURLTypes</key>
+  <array><dict>
+    <key>CFBundleURLName</key><string>com.myzman.mac</string>
+    <key>CFBundleURLSchemes</key><array><string>myzman</string></array>
+  </dict></array>
   <key>LSApplicationCategoryType</key><string>public.app-category.lifestyle</string>
   <key>NSLocationWhenInUseUsageDescription</key><string>המיקום משמש לחישוב הזמנים לפי המקום שבו אתם נמצאים.</string>
   <key>NSLocationUsageDescription</key><string>המיקום משמש לחישוב הזמנים לפי המקום שבו אתם נמצאים.</string>

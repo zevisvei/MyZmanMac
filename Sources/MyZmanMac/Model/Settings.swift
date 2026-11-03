@@ -12,8 +12,16 @@ struct ZmanItem: Codable, Hashable, Identifiable {
 struct Reminder: Codable, Hashable, Identifiable {
     enum Kind: String, Codable, CaseIterable, Identifiable {
         case zman, time
+        /// Before candle lighting, on every erev Shabbos / Yom Tov.
+        case candles
         var id: String { rawValue }
-        var title: String { self == .zman ? "לפי זמן" : "שעה קבועה" }
+        var title: String {
+            switch self {
+            case .zman: "לפי זמן"
+            case .time: "שעה קבועה"
+            case .candles: "הדלקת נרות"
+            }
+        }
     }
 
     enum Repeat: String, Codable, CaseIterable, Identifiable {
@@ -89,12 +97,19 @@ struct Reminder: Codable, Hashable, Identifiable {
             guard let id = zmanID, let item = settings.zmanim.first(where: { $0.id == id }),
                   let t = ZmanEngine.time(of: item, on: day, settings: settings) else { return nil }
             return t.addingTimeInterval(-Double(minutesBefore * 60))
+        case .candles:
+            // Only before sunset; on a second day of Yom Tov candles are lit from an existing flame after nightfall.
+            guard ZmanEngine.jewishCalendar(for: day, settings: settings).hasCandleLighting() else { return nil }
+            let c = SpecialTimes.candleLighting(on: day, settings)
+            guard !c.afterNightfall, let t = c.time else { return nil }
+            return t.addingTimeInterval(-Double(minutesBefore * 60))
         }
     }
 
     func title(in settings: AppSettings) -> String {
         if !label.isEmpty { return label }
         if kind == .zman, let name = settings.zmanim.first(where: { $0.id == zmanID })?.name { return name }
+        if kind == .candles { return "הדלקת נרות" }
         return "תזכורת"
     }
 
@@ -107,6 +122,10 @@ struct Reminder: Codable, Hashable, Identifiable {
             parts.append(minutesBefore == 0 ? "בזמן" : "\(minutesBefore) דק׳ לפני")
         case .time:
             parts.append(String(format: "%02d:%02d", hour, minute))
+        case .candles:
+            parts.append(minutesBefore == 0 ? "בזמן ההדלקה" : "\(minutesBefore) דק׳ לפני ההדלקה")
+            parts.append("בכל ערב שבת וחג")
+            return parts.joined(separator: " · ")
         }
         switch repeatMode {
         case .daily: parts.append("כל יום")
@@ -114,6 +133,24 @@ struct Reminder: Codable, Hashable, Identifiable {
         case .once: parts.append(onceDate.map { format.gregorianDate($0) } ?? "—")
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// How a zman is rounded to the minute when seconds aren't shown.
+enum ZmanRounding: String, Codable, CaseIterable, Identifiable {
+    /// Toward the stringent side: a time something may start from (netz, tzais, mincha) is rounded up,
+    /// a deadline (sof zman, shkiah, candle lighting) down, anything else to the nearest minute.
+    case stringent
+    case nearest
+    /// Drop the seconds (always earlier).
+    case truncate
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .stringent: "לחומרא"
+        case .nearest: "לדקה הקרובה"
+        case .truncate: "השמטת השניות"
+        }
     }
 }
 
@@ -142,6 +179,8 @@ enum MenuBarZmanMode: String, Codable, CaseIterable, Identifiable {
 }
 
 struct MenuBarOptions: Codable, Hashable {
+    /// Off = no status item at all (widgets only); opening the app again shows its window.
+    var showInMenuBar = true
     var showIcon = true
     var showHebrewDate = true
     var showGregorianDate = false
@@ -158,6 +197,7 @@ struct MenuBarOptions: Codable, Hashable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = MenuBarOptions()
+        showInMenuBar = (try? c.decode(Bool.self, forKey: .showInMenuBar)) ?? d.showInMenuBar
         showIcon = (try? c.decode(Bool.self, forKey: .showIcon)) ?? d.showIcon
         showHebrewDate = (try? c.decode(Bool.self, forKey: .showHebrewDate)) ?? d.showHebrewDate
         showGregorianDate = (try? c.decode(Bool.self, forKey: .showGregorianDate)) ?? d.showGregorianDate
@@ -188,6 +228,8 @@ struct CalendarSyncOptions: Codable, Hashable {
     var includeHebrewDate = true
     var includeEvents = true      // holidays, rosh chodesh, omer, parsha
     var zmanIDs: [UUID] = []      // timed events
+    /// Candle lighting, end of Shabbos / Yom Tov, fasts… on the days they apply.
+    var includeSpecialTimes = false
     var alertMinutes: Int?        // alarm on the timed events
     /// Where synced/added events go. nil = a dedicated "זמנים" calendar the app creates.
     var targetCalendarID: String?
@@ -206,6 +248,7 @@ struct CalendarSyncOptions: Codable, Hashable {
         includeHebrewDate = (try? c.decode(Bool.self, forKey: .includeHebrewDate)) ?? d.includeHebrewDate
         includeEvents = (try? c.decode(Bool.self, forKey: .includeEvents)) ?? d.includeEvents
         zmanIDs = (try? c.decode([UUID].self, forKey: .zmanIDs)) ?? d.zmanIDs
+        includeSpecialTimes = (try? c.decode(Bool.self, forKey: .includeSpecialTimes)) ?? d.includeSpecialTimes
         alertMinutes = try? c.decodeIfPresent(Int.self, forKey: .alertMinutes)
         targetCalendarID = try? c.decodeIfPresent(String.self, forKey: .targetCalendarID)
         showCalendarEvents = (try? c.decode(Bool.self, forKey: .showCalendarEvents)) ?? d.showCalendarEvents
@@ -231,8 +274,27 @@ struct AppSettings: Codable, Hashable {
     var colorPastZmanim = true
     var hebrewDateChangesAtSunset = true
     var appearance: AppearanceMode = .system
+    var rounding: ZmanRounding = .stringent
+    /// Minutes before sunset; nil = the local custom (Jerusalem 40, Haifa 30, elsewhere 18).
+    var candleLightingMinutes: Int?
+    /// The catalog zman used for the end of Shabbos.
+    var havdalahDefID = "GetTzaisGeonim8Point5Degrees"
+    /// The catalog zmanim for the start and end of a daytime fast.
+    var fastStartDefID = "GetAlos16Point1Degrees"
+    var fastEndDefID = "GetTzaisGeonim7Point083Degrees"
+    /// Show the Yerushalmi daf next to the Bavli.
+    var showYerushalmi = false
+    /// Show the day's tefila changes (Ya'aleh Veyavo, Hallel, no Tachanun…).
+    var showTefila = true
 
     var inIsrael: Bool { inIsraelOverride ?? location.isInIsrael }
+
+    var candleLightingOffset: Int { candleLightingMinutes ?? Self.localCandleLighting(location) }
+
+    static func localCandleLighting(_ loc: Location) -> Int {
+        let name = loc.nameEn.lowercased()
+        return name.contains("jerusalem") ? 40 : name.contains("haifa") ? 30 : 18
+    }
 
     init() {}
 
@@ -255,6 +317,18 @@ struct AppSettings: Codable, Hashable {
         colorPastZmanim = (try? c.decode(Bool.self, forKey: .colorPastZmanim)) ?? d.colorPastZmanim
         hebrewDateChangesAtSunset = (try? c.decode(Bool.self, forKey: .hebrewDateChangesAtSunset)) ?? d.hebrewDateChangesAtSunset
         appearance = (try? c.decode(AppearanceMode.self, forKey: .appearance)) ?? d.appearance
+        rounding = (try? c.decode(ZmanRounding.self, forKey: .rounding)) ?? d.rounding
+        candleLightingMinutes = try? c.decodeIfPresent(Int.self, forKey: .candleLightingMinutes)
+        havdalahDefID = (try? c.decode(String.self, forKey: .havdalahDefID)).flatMap { ZmanCatalog.def($0)?.id } ?? d.havdalahDefID
+        fastStartDefID = (try? c.decode(String.self, forKey: .fastStartDefID)).flatMap { ZmanCatalog.def($0)?.id } ?? d.fastStartDefID
+        fastEndDefID = (try? c.decode(String.self, forKey: .fastEndDefID)).flatMap { ZmanCatalog.def($0)?.id } ?? d.fastEndDefID
+        showYerushalmi = (try? c.decode(Bool.self, forKey: .showYerushalmi)) ?? d.showYerushalmi
+        showTefila = (try? c.decode(Bool.self, forKey: .showTefila)) ?? d.showTefila
+        // The selected location is stored by value: pick up corrections made to the built-in list since.
+        if location.region != .custom,
+           let fresh = Location.builtIn.first(where: { $0.nameEn == location.nameEn && $0.nameHe == location.nameHe }) {
+            location = fresh
+        }
     }
 
     private static let key = "settings.v1"
