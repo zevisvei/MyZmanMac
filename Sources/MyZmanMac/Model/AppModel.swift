@@ -10,10 +10,18 @@ final class AppModel: ObservableObject {
     @Published var settings: AppSettings {
         didSet {
             guard settings != oldValue else { return }
-            if settings.zmanim != oldValue.zmanim, pruneOrphans() { return }  // didSet runs again with the pruned settings
+            // Removing a zman also drops what points at it (reminders, pins…). That second assignment runs didSet
+            // again, and its side effects must compare against the settings before the whole change.
+            let oldValue = settingsBeforePrune ?? oldValue
+            if settings.zmanim != oldValue.zmanim, let pruned = prunedOrphans() {
+                settingsBeforePrune = oldValue
+                settings = pruned
+                return
+            }
+            settingsBeforePrune = nil
             settings.save()
             invalidate()
-            WidgetCenter.shared.reloadAllTimelines()
+            if settings.affectsWidgets(comparedTo: oldValue) { reloadWidgetsSoon() }
             if settings.appearance != oldValue.appearance { applyAppearance() }
             // Anything that moves a zman's time (or how it's rounded) moves reminders and synced events.
             let timesChanged = settings.location != oldValue.location || settings.zmanim != oldValue.zmanim
@@ -44,7 +52,12 @@ final class AppModel: ObservableObject {
             if n != selectedDate { selectedDate = n }
         }
     }
-    @Published private(set) var menuBarTitle = ""
+    /// The menu bar text, in its own object: it changes every minute, and only the status item and the
+    /// menu bar settings preview show it – not every view that observes the model.
+    let menuBar = MenuBarTitle()
+    var menuBarTitle: String { menuBar.text }
+    /// A text field in the popover has focus: plain arrow-key shortcuts (day back/forward) are off then.
+    @Published var isEditingText = false
     /// Not published: views that need a ticking clock use TimelineView, so the popover
     /// doesn't re-render every second.
     private(set) var now = Date()
@@ -121,7 +134,10 @@ final class AppModel: ObservableObject {
     func isToday(_ d: Date) -> Bool { dayKey(d) == dayKey(Date()) }
 
     private func invalidate() {
+        // Every cached value depends on some setting (a custom location's elevation or time zone too).
         todayCache = nil
+        infoCache.removeAll()
+        specialCache.removeAll()
         tick()
     }
 
@@ -140,34 +156,42 @@ final class AppModel: ObservableObject {
             syncCalendarIfEnabled()
         }
         let title = buildMenuBarTitle(at: date)
-        if title != menuBarTitle { menuBarTitle = title }
+        if title != menuBar.text { menuBar.text = title }
         scheduleNextTick(after: date)
     }
 
     /// The next moment the menu bar title (or the day) can change – not a fixed 1-second timer.
     private func scheduleNextTick(after date: Date) {
         let mb = settings.menuBar
+        guard mb.showInMenuBar else {
+            // Nothing on screen to update: only the day rollover (reminders, calendar sync) matters.
+            let cal = ZmanEngine.gregorian(tz)   // (calendar days: a DST day isn't 24 hours)
+            let midnight = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: date)) ?? date.addingTimeInterval(86_400)
+            schedule(at: midnight.addingTimeInterval(1), from: date, everySecond: false)
+            return
+        }
         var ticks = Ticks()
         if mb.showInMenuBar, let t = menuBarZman(at: date)?.time {
             ticks.changes.append(t)    // the next zman takes over
             if mb.showCountdown {
                 let within = Double(mb.countdownWithinMinutes * 60)
                 if within > 0 { ticks.changes.append(t.addingTimeInterval(-within)) }  // the countdown appears
-                if within == 0 || t.timeIntervalSince(date) <= within {
-                    if settings.showSeconds { ticks.everySecond = true } else { ticks.countdowns = [t] }
-                }
+                if (within == 0 || t.timeIntervalSince(date) <= within), settings.showSeconds { ticks.everySecond = true }
             }
         }
         if mb.showHebrewDate, settings.hebrewDateChangesAtSunset, let sunset = ZmanEngine.sunset(on: date, settings: settings) {
             ticks.changes.append(sunset)
         }
         // A hair after the boundary, so the new value is already current when we look.
-        let fire = ticks.next(after: date).addingTimeInterval(0.02)
+        schedule(at: ticks.next(after: date).addingTimeInterval(0.02), from: date, everySecond: ticks.everySecond)
+    }
+
+    private func schedule(at fire: Date, from date: Date, everySecond: Bool) {
         timer?.invalidate()
         let t = Timer(fire: fire, interval: 0, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
-        t.tolerance = ticks.everySecond || fire.timeIntervalSince(date) < 2 ? 0.05 : 0.5
+        t.tolerance = everySecond || fire.timeIntervalSince(date) < 2 ? 0.05 : 0.5
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }
@@ -254,6 +278,17 @@ final class AppModel: ObservableObject {
         return parts.joined(separator: " · ")
     }
 
+    private var widgetReload: DispatchWorkItem?
+
+    /// Several changes in a row (dragging the list, flipping options) reload the widgets once. Each reload
+    /// counts against the widgets' daily budget.
+    private func reloadWidgetsSoon() {
+        widgetReload?.cancel()
+        let work = DispatchWorkItem { WidgetCenter.shared.reloadAllTimelines() }
+        widgetReload = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+    }
+
     private var syncWork: DispatchWorkItem?
 
     /// Debounced, so flipping several options in a row rewrites the calendar once.
@@ -263,7 +298,7 @@ final class AppModel: ObservableObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             let s = self.settings
-            Task { try? await CalendarSync.shared.sync(s, options: s.calendarSync) }
+            Task { try? await CalendarSync.shared.sync(s, options: s.calendarSync, onlyIfEnabled: true) }
         }
         syncWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
@@ -271,16 +306,18 @@ final class AppModel: ObservableObject {
 
     /// Drops reminders / pins / calendar choices that point at zmanim no longer in the list.
     /// Returns true if it changed the settings.
-    private func pruneOrphans() -> Bool {
+    private var settingsBeforePrune: AppSettings?
+
+    /// The settings without reminders / pins / calendar choices that point at zmanim no longer in the list,
+    /// or nil if there are none.
+    private func prunedOrphans() -> AppSettings? {
         let ids = Set(settings.zmanim.map(\.id))
         var s = settings
         s.reminders.removeAll { $0.kind == .zman && !($0.zmanID.map(ids.contains) ?? false) }
         if let p = s.menuBar.pinnedZman, !ids.contains(p) { s.menuBar.pinnedZman = nil }
         s.menuBar.hiddenZmanim.removeAll { !ids.contains($0) }
         s.calendarSync.zmanIDs.removeAll { !ids.contains($0) }
-        guard s != settings else { return false }
-        settings = s
-        return true
+        return s == settings ? nil : s
     }
 
     /// Restores MyZman's default list, keeping the identity of zmanim that are already in it
@@ -305,4 +342,8 @@ final class AppModel: ObservableObject {
             selectedDate = d
         }
     }
+}
+
+final class MenuBarTitle: ObservableObject {
+    @Published var text = ""
 }

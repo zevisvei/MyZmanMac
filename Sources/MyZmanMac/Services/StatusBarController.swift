@@ -21,7 +21,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
     func start() {
         let model = AppModel.shared
-        model.$menuBarTitle.removeDuplicates()
+        model.menuBar.$text.removeDuplicates()
             .combineLatest(model.$settings.map { [$0.menuBar.showInMenuBar, $0.menuBar.showIcon] }.removeDuplicates())
             .sink { [weak self] title, flags in self?.update(title: title, show: flags[0], icon: flags[1]) }
             .store(in: &cancellables)
@@ -46,7 +46,13 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             button.image = nil
         }
         button.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
-        if button.title != title { button.title = title }
+        // Digits of equal width, so a ticking countdown doesn't change the item's width (which re-lays out the
+        // menu bar and re-snapshots the item on every display each second).
+        if button.title != title {
+            button.attributedTitle = NSAttributedString(string: title, attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
+            ])
+        }
     }
 
     private func makeItem() -> NSStatusItem {
@@ -58,7 +64,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         if let button = item.button {
             button.target = self
             button.action = #selector(toggle(_:))
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            // On mouse-down, like a menu – and the same event that the transient popover closes on (see toggle).
+            button.sendAction(on: [.leftMouseDown, .rightMouseDown])
         }
         visibilityObservation = item.observe(\.isVisible, options: [.new]) { _, change in
             guard change.newValue == false else { return }
@@ -68,22 +75,34 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         return item
     }
 
-    /// When the transient popover last closed. A click on the button while it's open closes it on mouse-down
-    /// (as a click outside it) before the button's action runs: that same click mustn't reopen it.
-    private var lastClosed = Date.distantPast
+    /// A press on the button while the popover is open first closes the transient popover (AppKit closes it as the
+    /// app's focus moves, before the press reaches the button), then reaches the button's action: that same press
+    /// mustn't reopen it. When the popover closes with the mouse held down on the button, remember that press.
+    private var closedByPress: TimeInterval?
 
     @objc private func toggle(_ sender: Any?) {
+        let press = NSApp.currentEvent?.timestamp
         if popover?.isShown == true {
             popover?.performClose(sender)
-        } else if Date().timeIntervalSince(lastClosed) > 0.3 {
+        } else if let closed = closedByPress, let press, abs(press - closed) < 1 {
+            closedByPress = nil
+        } else {
             showPopover()
         }
+    }
+
+    func popoverWillClose(_ notification: Notification) {
+        closedByPress = nil
+        guard NSEvent.pressedMouseButtons != 0, let button = item?.button, let window = button.window else { return }
+        let onButton = window.convertToScreen(button.convert(button.bounds, to: nil)).contains(NSEvent.mouseLocation)
+        if onButton { closedByPress = ProcessInfo.processInfo.systemUptime }   // the clock of NSEvent.timestamp
     }
 
     /// Opens the popover under the menu bar item (e.g. from a widget click). False if there's no item.
     @discardableResult
     func showPopover() -> Bool {
-        guard let button = item?.button else { return false }
+        // Not under an item that isn't on screen (e.g. hidden behind the notch on a full menu bar).
+        guard let button = item?.button, button.window?.occlusionState.contains(.visible) == true else { return false }
         let popover = self.popover ?? makePopover()
         if !popover.isShown {
             NSApp.activate(ignoringOtherApps: true)
@@ -100,7 +119,6 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     /// rebuilt (on the current day) the next time it opens.
     func popoverDidClose(_ notification: Notification) {
         log.debug("popover closed")
-        lastClosed = Date()
         popover = nil
     }
 

@@ -28,10 +28,10 @@ struct ZmanimListView: View {
             .padding(.horizontal, 8)
         }
 
-        // Rows change state at each zman, and the next one shows a countdown: tick only for those.
-        // (Only the next zman shows a countdown, so any zman's last 10 minutes is the next one's.)
+        // Rows change state at each zman (and the countdown on the minute); a per-second countdown, if seconds
+        // are shown, ticks on its own in the next row – the rest of the list doesn't redraw every second.
         let times = isToday ? zmanim.compactMap(\.time) : []
-        TimelineView(Ticks(everySecond: isToday && s.showSeconds, countdowns: times, changes: times)) { ctx in
+        TimelineView(Ticks(changes: times)) { ctx in
             let now = ctx.date
             let nextID = isToday ? model.nextZmanID(at: now) : nil
             ScrollView {
@@ -134,9 +134,11 @@ private struct ZmanRow: View {
                 }
                 Spacer()
                 if isNext, let t = z.time {
-                    Text("\u{200E}-\(ZmanFormat.countdown(t.timeIntervalSince(now), showSeconds: s.showSeconds))")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    TimelineView(Ticks(everySecond: s.showSeconds)) { ctx in
+                        Text("בעוד \(ZmanFormat.countdown(t.timeIntervalSince(ctx.date), showSeconds: s.showSeconds))")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Text(isDuration ? ZmanFormat.duration(z.duration, seconds: s.showSeconds) : model.format.time(z.time))
                     .monospacedDigit()

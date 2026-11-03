@@ -30,12 +30,34 @@ struct Location: Codable, Hashable, Identifiable {
 
     var id: String { "\(region.rawValue)|\(nameEn)|\(latitude)|\(longitude)" }
 
+    init(nameHe: String, nameEn: String, region: Region, latitude: Double, longitude: Double, elevation: Double, timeZoneID: String) {
+        self.nameHe = nameHe; self.nameEn = nameEn; self.region = region
+        self.latitude = latitude; self.longitude = longitude; self.elevation = elevation; self.timeZoneID = timeZoneID
+    }
+
+    // Lenient, like the rest of the settings: a missing or unknown field must not drop a location (and with it
+    // the whole list of custom locations). Only the coordinates are required.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        latitude = try c.decode(Double.self, forKey: .latitude)
+        longitude = try c.decode(Double.self, forKey: .longitude)
+        nameHe = (try? c.decode(String.self, forKey: .nameHe)) ?? ""
+        nameEn = (try? c.decode(String.self, forKey: .nameEn)) ?? ""
+        region = (try? c.decode(Region.self, forKey: .region)) ?? .custom
+        elevation = (try? c.decode(Double.self, forKey: .elevation)) ?? 0
+        timeZoneID = (try? c.decode(String.self, forKey: .timeZoneID)) ?? TimeZone.current.identifier
+    }
+
     var displayName: String { nameHe.isEmpty ? nameEn : nameHe }
 
     var timeZone: TimeZone { TimeZone(identifier: timeZoneID) ?? .current }
 
-    /// Within Jerusalem's municipal area (roughly), where Purim is on 15 Adar.
-    var isJerusalem: Bool { abs(latitude - 31.78) < 0.08 && abs(longitude - 35.21) < 0.1 }
+    /// Within Jerusalem's municipal area, where Purim is on 15 Adar and candles are lit 40 minutes before
+    /// sunset. A box around the city that leaves out the towns next to it that keep the 14th – Givat Ze'ev
+    /// (31.86, 35.16), Mevaseret Zion (31.80, 35.15), Ma'ale Adumim (31.77, 35.30), Beitar Illit (31.69, 35.12).
+    var isJerusalem: Bool {
+        (31.72...31.84).contains(latitude) && (35.17...35.26).contains(longitude)
+    }
 
     /// Locations in Israel follow the Israeli holiday/parsha schedule by default.
     var isInIsrael: Bool { region == .israel || timeZoneID == "Asia/Jerusalem" }

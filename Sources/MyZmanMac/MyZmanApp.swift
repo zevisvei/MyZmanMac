@@ -96,7 +96,6 @@ enum AppWindows {
         show("settings", title: "הגדרות זמנים") { SettingsView() }
     }
 
-
     private static func show<V: View>(_ id: String, title: String, content: () -> V) {
         let w = windows[id] ?? {
             let host = NSHostingController(rootView: content()
@@ -107,14 +106,30 @@ enum AppWindows {
             w.title = title
             w.styleMask = [.titled, .closable, .miniaturizable]
             w.isReleasedWhenClosed = false
+            w.delegate = closer
             if !w.setFrameUsingName(id) { w.center() }
             w.setFrameAutosaveName(id)
             windows[id] = w
             return w
         }()
+        // While a window is open the app is in the Dock and ⌘-Tab, so it can be switched back to.
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
     }
+
+    /// On close: drop the window and its content (nothing keeps updating behind it), and when no window is
+    /// left go back to being a menu bar app.
+    private final class Closer: NSObject, NSWindowDelegate {
+        func windowWillClose(_ notification: Notification) {
+            guard let w = notification.object as? NSWindow else { return }
+            MainActor.assumeIsolated {
+                AppWindows.windows = AppWindows.windows.filter { $0.value !== w }
+                if AppWindows.windows.isEmpty { NSApp.setActivationPolicy(.accessory) }
+            }
+        }
+    }
+    private static let closer = Closer()
 }
 
 enum LoginItem {

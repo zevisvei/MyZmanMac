@@ -21,9 +21,11 @@ struct ZmanDef: Identifiable {
 
     var kind: Kind {
         let earliest = ["GetMisheyakir", "ZmanGetMisheyakir", "GetSunrise", "GetSeaLevelSunrise", "GetTzais",
-                        "GetBainHasmashosRT", "ZmanGetBeinHashmases", "GetMinchaGedola", "GetMinchaKetana", "GetTchilasZmanKidushLevana"]
+                        "GetMinchaGedola", "GetMinchaKetana", "GetTchilasZmanKidushLevana"]
+        // Bein hashmashos (Yereim's and Rabbeinu Tam's) starts it: the end of the day, a deadline (mincha, melacha).
         let deadline = ["GetSofZman", "GetSunset", "GetSeaLevelSunset", "GetCandleLighting", "ZmanGetCandleLighting",
-                        "GetBainHasmashosYereim", "GetSamuchLeMinchaKetana", "GetSolarMidnight"]
+                        "GetBainHasmashosYereim", "GetBainHasmashosRT", "ZmanGetBeinHashmases",
+                        "GetSamuchLeMinchaKetana", "GetSolarMidnight"]
         // Alos both starts the day and ends the night, chatzos and plag serve both ways: nearest.
         if earliest.contains(where: id.hasPrefix) { return .earliest }
         if deadline.contains(where: id.hasPrefix) { return .deadline }

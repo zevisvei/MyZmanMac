@@ -36,12 +36,13 @@ struct ZmanimProvider: TimelineProvider {
         // A new entry at each upcoming zman (so "next" advances), at sunset (Hebrew date) and at midnight.
         var times = (ZmanEngine.zmanim(on: now, settings: settings) + ZmanEngine.zmanim(on: tomorrow, settings: settings))
             .compactMap(\.time).filter { $0 > now }
-        if let sunset = ZmanEngine.sunset(on: now, settings: settings), sunset > now { times.append(sunset) }
-        // The Shabbos widget moves on to next week once Shabbos is out.
-        if let def = ZmanCatalog.def(settings.havdalahDefID),
-           let out = ZmanEngine.compute(def, on: ZmanEngine.calendar(for: now, settings: settings)).0, out > now {
-            times.append(out)
+        // Rounded like the times shown, so these don't add entries seconds away from a zman's own.
+        if settings.hebrewDateChangesAtSunset,
+           let sunset = ZmanEngine.round(ZmanEngine.sunset(on: now, settings: settings), .deadline, settings), sunset > now {
+            times.append(sunset)
         }
+        // The Shabbos widget moves on to next week once Shabbos is out.
+        if let out = SpecialTimes.havdalah(on: now, settings), out > now { times.append(out) }
         let midnight = cal.startOfDay(for: tomorrow)
         times.append(midnight)
         let entries = [ZmanimEntry(date: now, settings: settings)]
@@ -59,6 +60,9 @@ struct WidgetDay {
     let info: DayInfo
     let today: [ComputedZman]
     let upcoming: [ComputedZman]
+    /// The list to show: today's, or tomorrow's once today's last zman has passed.
+    let list: [ComputedZman]
+    let listIsTomorrow: Bool
 
     init(_ entry: ZmanimEntry) {
         s = entry.settings
@@ -71,12 +75,17 @@ struct WidgetDay {
             return cal.date(byAdding: .day, value: 1, to: now)!
         }()
         info = ZmanEngine.dayInfo(for: hebrewDay, settings: s)
-        let list = ZmanEngine.zmanim(on: now, settings: s).filter { $0.item.def?.isDuration == false }
-        today = s.sortByTime ? ZmanEngine.timeOrdered(list) : list
-        upcoming = (today + ZmanEngine.zmanim(on: cal.date(byAdding: .day, value: 1, to: now)!, settings: s)
-            .filter { $0.item.def?.isDuration == false })
+        func timed(_ d: Date) -> [ComputedZman] {
+            let l = ZmanEngine.zmanim(on: d, settings: s).filter { $0.item.def?.isDuration == false }
+            return s.sortByTime ? ZmanEngine.timeOrdered(l) : l
+        }
+        today = timed(now)
+        let tomorrowList = timed(cal.date(byAdding: .day, value: 1, to: now)!)
+        upcoming = (today + tomorrowList)
             .filter { ($0.time ?? .distantPast) > now }
             .sorted { $0.time! < $1.time! }
+        listIsTomorrow = !today.contains { ($0.time ?? .distantPast) > now }
+        list = listIsTomorrow ? tomorrowList : today
     }
 }
 
@@ -118,7 +127,7 @@ struct NextZmanView: View {
                 // The system redraws these itself (no timeline entries). A per-second timer only if seconds
                 // are wanted; otherwise "in 2 hours, 5 minutes", which changes once a minute.
                 Group {
-                    if day.s.showSeconds { Text(t, style: .timer) } else { Text(t, style: .relative) }
+                    if day.s.showSeconds { Text(t, style: .timer) } else { Text("בעוד \(Text(t, style: .relative))") }
                 }
                 .font(.callout.monospacedDigit())
                     .foregroundStyle(.orange)
@@ -154,20 +163,35 @@ struct ZmanimListView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        let nextID = day.upcoming.first?.id
-        let rows: [ComputedZman] = {
-            guard family == .systemMedium else { return day.today }
-            // Medium: a window of 5 around the next zman.
-            let idx = day.today.firstIndex { $0.id == nextID } ?? max(0, day.today.count - 5)
-            let start = max(0, min(idx - 1, day.today.count - 5))
-            return Array(day.today[start..<min(day.today.count, start + 5)])
-        }()
+        // The next zman is the same row only if it's the same day's (today's and tomorrow's rows share ids).
+        let next = day.upcoming.first
+        let rows = day.list
+        let idx = rows.firstIndex { $0.id == next?.id && $0.time == next?.time } ?? 0
+        if family == .systemMedium {
+            content(window(rows, around: idx, count: 6), next: next, disclaimer: false)
+        } else {
+            // Large: everything with the disclaimer if it fits, else without, else a window around the next zman.
+            ViewThatFits(in: .vertical) {
+                content(rows, next: next, disclaimer: true)
+                content(rows, next: next, disclaimer: false)
+                content(window(rows, around: idx, count: 15), next: next, disclaimer: false)
+            }
+        }
+    }
 
+    private func window(_ rows: [ComputedZman], around idx: Int, count: Int) -> [ComputedZman] {
+        guard rows.count > count else { return rows }
+        let start = max(0, min(idx - 1, rows.count - count))
+        return Array(rows[start..<(start + count)])
+    }
+
+    private func content(_ rows: [ComputedZman], next: ComputedZman?, disclaimer: Bool) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text(day.info.hebrewDate).font(.headline)
+                if day.listIsTomorrow { Text("זמני מחר").font(.caption).foregroundStyle(.secondary) }
                 Spacer()
-                Text(day.s.location.displayName).font(.caption2).foregroundStyle(.secondary)
+                Text(day.s.location.displayName).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
             if family == .systemLarge, !day.info.parsha.isEmpty {
                 Text(([day.info.parsha] + day.info.events).joined(separator: " · "))
@@ -176,7 +200,7 @@ struct ZmanimListView: View {
             Divider()
             ForEach(rows) { z in
                 let past = (z.time ?? .distantFuture) < day.now
-                let isNext = z.id == nextID
+                let isNext = z.id == next?.id && z.time == next?.time
                 HStack {
                     Text(z.item.name).lineLimit(1)
                     Spacer()
@@ -186,8 +210,8 @@ struct ZmanimListView: View {
                 .foregroundStyle(past ? AnyShapeStyle(.secondary) : isNext ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
             }
             Spacer(minLength: 0)
-            if family == .systemLarge {
-                Text(Disclaimer.short).font(.system(size: 9)).foregroundStyle(.tertiary)
+            if disclaimer {
+                Text(Disclaimer.short).font(.system(size: 9)).foregroundStyle(.tertiary).lineLimit(2)
             }
         }
     }

@@ -140,6 +140,7 @@ codesign --force --options runtime "${TS[@]}" --sign "$IDENTITY" --entitlements 
 
 if [[ "${1:-}" == "--install" ]]; then
   pkill -x MyZman 2>/dev/null || true
+  for _ in {1..50}; do pgrep -x MyZman >/dev/null || break; sleep 0.1; done   # wait until it has quit
   rm -rf /Applications/MyZman.app
   cp -R "$APP" /Applications/
   open /Applications/MyZman.app

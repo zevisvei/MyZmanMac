@@ -61,6 +61,11 @@ private struct TopBar: View {
     @EnvironmentObject var model: AppModel
     let openSettings: () -> Void
 
+    /// A long custom location name, shortened so it doesn't push the clock and buttons out of the popover.
+    static func short(_ name: String) -> String {
+        name.count > 22 ? String(name.prefix(21)) + "…" : name
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             Menu {
@@ -80,7 +85,7 @@ private struct TopBar: View {
                 Divider()
                 Button("ניהול מיקומים…", action: openSettings)
             } label: {
-                Label(model.settings.location.displayName, systemImage: "mappin.and.ellipse")
+                Label(Self.short(model.settings.location.displayName), systemImage: "mappin.and.ellipse")
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -94,10 +99,10 @@ private struct TopBar: View {
                     .help("השעה במיקום הנבחר")
             }
 
-            Button(action: openSettings) { Image(systemName: "gearshape") }
+            Button(action: openSettings) { Label("הגדרות", systemImage: "gearshape").labelStyle(.iconOnly) }
                 .buttonStyle(.borderless)
                 .help("הגדרות")
-            Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }
+            Button { NSApp.terminate(nil) } label: { Label("יציאה", systemImage: "power").labelStyle(.iconOnly) }
                 .buttonStyle(.borderless)
                 .help("יציאה")
         }
@@ -115,9 +120,10 @@ struct DayHeader: View {
 
         VStack(spacing: 6) {
             HStack {
-                Button { shift(-1) } label: { Image(systemName: "chevron.right") }
+                Button { shift(-1) } label: { Label("יום קודם", systemImage: "chevron.right").labelStyle(.iconOnly) }
                     .buttonStyle(.borderless).help("יום קודם (→)")
-                    .keyboardShortcut(.rightArrow, modifiers: [])
+                    // Not while typing in a text field: there the arrows move the caret.
+                    .keyboardShortcut(model.isEditingText ? nil : KeyboardShortcut(.rightArrow, modifiers: []))
                 Spacer()
                 VStack(spacing: 2) {
                     Text(info.hebrewDate)
@@ -128,27 +134,21 @@ struct DayHeader: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button { shift(1) } label: { Image(systemName: "chevron.left") }
+                Button { shift(1) } label: { Label("יום הבא", systemImage: "chevron.left").labelStyle(.iconOnly) }
                     .buttonStyle(.borderless).help("יום הבא (←)")
-                    .keyboardShortcut(.leftArrow, modifiers: [])
+                    .keyboardShortcut(model.isEditingText ? nil : KeyboardShortcut(.leftArrow, modifiers: []))
             }
             .scrollStep { shift($0) }
             .help("גלגלת – מעבר בין ימים")
 
-            if isToday, model.settings.hebrewDateChangesAtSunset,
-               !cal.isDate(model.currentHebrewDay(at: Date()), inSameDayAs: date) {
-                Text("אחרי השקיעה – התאריך העברי: \(model.dayInfo(model.currentHebrewDay(at: Date())).hebrewDayMonth)")
-                    .font(.caption).foregroundStyle(.orange)
-            }
-
-            FlowChips(items: ([info.parsha] + info.events).filter { !$0.isEmpty })
-            if model.settings.showTefila, !info.tefila.isEmpty {
-                FlowChips(items: info.tefila, tint: .green)
+            // Fixed rows, each one line high whatever the day, so nothing below (the zmanim list, the month
+            // grid) moves when the day changes: chips that don't fit collapse into "+N".
+            OneLineChips(items: ([info.parsha] + info.events).filter { !$0.isEmpty })
+            if model.settings.showTefila {
+                OneLineChips(items: info.tefila, tint: .green)
                     .help("שינויים בתפילת היום (לפי KosherJava; יש לבדוק במנהג המקום)")
             }
-            if !info.molad.isEmpty {
-                Label(info.molad, systemImage: "moon").font(.caption).foregroundStyle(.secondary)
-            }
+            DayNoteLine(date: date, molad: info.molad)
 
             HStack(spacing: 12) {
                 if !info.dafYomi.isEmpty {
@@ -173,6 +173,60 @@ struct DayHeader: View {
     private func shift(_ days: Int) {
         withAnimation(.easeInOut(duration: 0.15)) {
             model.selectedDate = ZmanEngine.gregorian(model.tz).date(byAdding: .day, value: days, to: model.selectedDate)!
+        }
+    }
+}
+
+/// Chips on a single line: as many as fit, then "+N" (all of them in the tooltip). Always one line high, empty or not.
+struct OneLineChips: View {
+    let items: [String]
+    var tint: Color = .accentColor
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            ForEach(Array(stride(from: items.count, through: 0, by: -1)), id: \.self) { shown in
+                HStack(spacing: 6) {
+                    ForEach(items.prefix(shown), id: \.self) { chip($0) }
+                    if shown < items.count { chip("+\(items.count - shown)") }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 22)
+        .help(items.joined(separator: "\n"))
+    }
+
+    private func chip(_ s: String) -> some View {
+        Text(s)
+            .font(.caption.weight(.medium))
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Capsule().fill(tint.opacity(0.15)))
+    }
+}
+
+/// One line, always there: after sunset (today) the evening's Hebrew date, otherwise the molad on Shabbos
+/// Mevarchim, otherwise blank. Redraws itself at sunset.
+private struct DayNoteLine: View {
+    @EnvironmentObject var model: AppModel
+    let date: Date
+    let molad: String
+
+    var body: some View {
+        let sunset = model.isToday(date) ? ZmanEngine.sunset(on: date, settings: model.settings) : nil
+        TimelineView(Ticks(changes: sunset.map { [$0] } ?? [])) { ctx in
+            let evening = model.isToday(date) && model.settings.hebrewDateChangesAtSunset
+                && !ZmanEngine.gregorian(model.tz).isDate(model.currentHebrewDay(at: ctx.date), inSameDayAs: date)
+            HStack(spacing: 10) {
+                if evening {
+                    Text("אחרי השקיעה – התאריך העברי: \(model.dayInfo(model.currentHebrewDay(at: ctx.date)).hebrewDayMonth)")
+                        .foregroundStyle(.orange)
+                }
+                if !molad.isEmpty { Label(molad, systemImage: "moon").foregroundStyle(.secondary) }
+            }
+            .font(.caption)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, minHeight: 15)
         }
     }
 }

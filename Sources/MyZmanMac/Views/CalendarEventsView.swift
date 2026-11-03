@@ -10,46 +10,58 @@ struct DayEventsSection: View {
 
     var body: some View {
         let opts = model.settings.calendarSync
-        if opts.showCalendarEvents || adding {
-            let _ = sync.version
-            let cal = ZmanEngine.gregorian(model.tz)
-            let start = cal.startOfDay(for: date)
-            let events = sync.userEvents(from: start, to: cal.date(byAdding: .day, value: 1, to: start)!, tz: model.tz, options: opts)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Label("ביומן", systemImage: "calendar").font(.subheadline.bold())
-                    Spacer()
-                    Button { sync.openInCalendarApp(date) } label: { Image(systemName: "arrow.up.forward.app") }
-                        .buttonStyle(.borderless).help("פתח ביומן")
-                    if !adding {
-                        Button { adding = true } label: { Label("אירוע חדש", systemImage: "plus") }
-                            .controlSize(.small)
-                            .disabled(!sync.hasAccess)
-                    }
-                }
-                if !sync.hasAccess {
-                    Button("אשר גישה ליומן") {
-                        Task {
-                            _ = try? await sync.requestAccess()
-                            // The permission prompt took focus and closed the popover: bring it back.
-                            AppWindows.showApp()
-                        }
-                    }.buttonStyle(.link)
-                } else if events.isEmpty && !adding {
-                    Text("אין אירועים").font(.caption).foregroundStyle(.secondary)
-                }
-                ForEach(events) { e in
-                    EventRow(event: e)
-                }
-                if adding {
-                    NewEventForm(date: date) { adding = false }
-                }
+        // A container that's always there, so "new event on this day" reaches it even when events are hidden.
+        VStack(alignment: .leading, spacing: 0) {
+            if opts.showCalendarEvents || adding {
+                content(opts)
             }
-            .onChange(of: model.newEventRequest) { adding = true }
-            .padding(embedded ? 0 : 8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(embedded ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary.opacity(0.5))))
         }
+        .onChange(of: model.newEventRequest) { adding = true }
+    }
+
+    @ViewBuilder
+    private func content(_ opts: CalendarSyncOptions) -> some View {
+        let _ = sync.version
+        let cal = ZmanEngine.gregorian(model.tz)
+        let start = cal.startOfDay(for: date)
+        let events = sync.userEvents(from: start, to: cal.date(byAdding: .day, value: 1, to: start)!, tz: model.tz, options: opts)
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Label("ביומן", systemImage: "calendar").font(.subheadline.bold())
+                Spacer()
+                Button { sync.openInCalendarApp(date) } label: { Label("פתח ביומן", systemImage: "arrow.up.forward.app").labelStyle(.iconOnly) }
+                    .buttonStyle(.borderless).help("פתח ביומן")
+                // The form opens in its own popover: inline, it was squeezed into the card, the save button
+                // out of sight.
+                Button { adding = true } label: { Label("אירוע חדש", systemImage: "plus") }
+                    .controlSize(.small)
+                    .disabled(!sync.hasAccess)
+                    .popover(isPresented: $adding, arrowEdge: .bottom) {
+                        NewEventForm(date: date) { adding = false }
+                            .environmentObject(model)
+                            .environment(\.layoutDirection, .rightToLeft)
+                            .padding(12)
+                            .frame(width: 320)
+                    }
+            }
+            if !sync.hasAccess {
+                Button("אשר גישה ליומן") {
+                    Task {
+                        _ = try? await sync.requestAccess()
+                        // The permission prompt took focus and closed the popover: bring it back.
+                        AppWindows.showApp()
+                    }
+                }.buttonStyle(.link)
+            } else if events.isEmpty {
+                Text("אין אירועים").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(events) { e in
+                EventRow(event: e)
+            }
+        }
+        .padding(embedded ? 0 : 8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(embedded ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary.opacity(0.5))))
     }
 }
 
@@ -69,6 +81,7 @@ private struct NewEventForm: View {
     @ViewState private var years = 10
     @ViewState private var error: String?
     @ViewState private var saving = false
+    @FocusState private var titleFocused: Bool
 
     /// The day whose Hebrew date the event recurs on.
     private var hebrewDay: Date {
@@ -89,6 +102,10 @@ private struct NewEventForm: View {
         let sync = CalendarSync.shared
         VStack(alignment: .leading, spacing: 6) {
             TextField("כותרת", text: $title).textFieldStyle(.roundedBorder)
+                .focused($titleFocused)
+                // While typing, the arrows move the caret instead of switching the popover's day.
+                .onChange(of: titleFocused) { model.isEditingText = titleFocused }
+                .onDisappear { model.isEditingText = false }
             HStack {
                 Toggle("כל היום", isOn: $allDay)
                 if !allDay {

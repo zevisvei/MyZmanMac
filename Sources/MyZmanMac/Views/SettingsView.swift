@@ -124,12 +124,7 @@ private struct MenuBarSettings: View {
         let mb = $model.settings.menuBar
         Form {
             Section("תצוגה מקדימה") {
-                HStack {
-                    if model.settings.menuBar.showIcon { Image(systemName: "sun.horizon") }
-                    Text(model.menuBarTitle.isEmpty ? " " : model.menuBarTitle)
-                }
-                .padding(.horizontal, 10).padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 5).fill(.quaternary))
+                MenuBarPreview(title: model.menuBar, showIcon: model.settings.menuBar.showIcon)
             }
             Section {
                 Toggle("הצג בשורת התפריטים", isOn: mb.showInMenuBar)
@@ -183,6 +178,21 @@ private struct MenuBarSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Observes only the menu bar text, so the rest of the settings window doesn't redraw every minute.
+private struct MenuBarPreview: View {
+    @ObservedObject var title: MenuBarTitle
+    let showIcon: Bool
+
+    var body: some View {
+        HStack {
+            if showIcon { Image(systemName: "sun.horizon") }
+            Text(title.text.isEmpty ? " " : title.text)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 5).fill(.quaternary))
     }
 }
 
@@ -327,9 +337,9 @@ private struct ZmanimSettings: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("הרשימה שלי").font(.headline)
                 List(selection: $selection) {
-                    ForEach($model.settings.zmanim) { $item in
+                    ForEach(model.settings.zmanim) { item in
                         HStack {
-                            TextField("", text: $item.name).textFieldStyle(.plain)
+                            ZmanNameField(item: item)
                             Spacer()
                             Text(item.def?.he ?? "?").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
@@ -382,6 +392,32 @@ private struct ZmanimSettings: View {
     }
 }
 
+/// Edits a zman's name in a draft and saves it on Return or when the field loses focus – not on every
+/// keystroke (each settings change saves, reschedules reminders and reloads the widgets).
+private struct ZmanNameField: View {
+    @EnvironmentObject var model: AppModel
+    let item: ZmanItem
+    @ViewState private var draft = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("", text: $draft)
+            .textFieldStyle(.plain)
+            .focused($focused)
+            .onAppear { draft = item.name }
+            .onChange(of: item.name) { if !focused { draft = item.name } }
+            .onChange(of: focused) { if !focused { commit() } }
+            .onSubmit(commit)
+    }
+
+    private func commit() {
+        let name = draft.trimmingCharacters(in: .whitespaces)
+        guard let i = model.settings.zmanim.firstIndex(where: { $0.id == item.id }) else { return }
+        if name.isEmpty { draft = item.name; return }
+        if model.settings.zmanim[i].name != name { model.settings.zmanim[i].name = name }
+    }
+}
+
 // MARK: - Reminders
 
 private struct ReminderSettings: View {
@@ -408,7 +444,7 @@ private struct ReminderSettings: View {
                         }
                         Spacer()
                         Button("ערוך") { edit(r) }.buttonStyle(.link)
-                        Button { delete(r.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+                        Button { delete(r.id) } label: { Label("מחק תזכורת", systemImage: "trash").labelStyle(.iconOnly) }.buttonStyle(.borderless)
                     }
                     .opacity(r.enabled ? 1 : 0.5)
                 }
@@ -716,9 +752,12 @@ private struct WidgetSection: View {
 
     private func enable() {
         working = true
-        do { try WidgetSigner.enable() } catch {
-            self.error = error.localizedDescription
-            working = false
+        error = nil
+        Task {
+            do { try await WidgetSigner.enable() } catch {
+                self.error = error.localizedDescription
+                working = false
+            }
         }
     }
 }

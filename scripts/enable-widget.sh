@@ -7,8 +7,11 @@
 # even a self-signed, untrusted one – so this creates a local one if needed (no Xcode, no Apple ID)
 # and re-signs the installed app with it.
 #
-# Usage: zsh enable-widget.sh [path/to/MyZman.app]
+# Usage: zsh enable-widget.sh [path/to/MyZman.app] [--prepare]
+#   --prepare: only the checks and the certificate (exit status says whether re-signing can go ahead);
+#              the app runs this first, so a failure shows in its window instead of leaving it waiting.
 set -euo pipefail
+PREPARE=0; [[ "${2:-}" == "--prepare" ]] && PREPARE=1
 
 APP="${1:-/Applications/MyZman.app}"
 WEX="$APP/Contents/PlugIns/MyZmanWidget.appex"
@@ -42,6 +45,7 @@ if [[ -z "$IDENTITY" ]]; then
 fi
 
 echo "› חותם עם: $IDENTITY"
+(( PREPARE )) && exit 0
 ENT=$(mktemp -d)
 cat > "$ENT/widget.plist" <<ENTS
 <?xml version="1.0" encoding="UTF-8"?>
@@ -66,6 +70,8 @@ cat > "$ENT/app.plist" <<ENTS
 ENTS
 
 pkill -x MyZman 2>/dev/null || true
+# Re-sign only once it has quit (up to 5 s).
+for _ in {1..50}; do pgrep -x MyZman >/dev/null || break; sleep 0.1; done
 # Whatever happens from here on, don't leave the app closed.
 trap 'open "$APP"' EXIT
 xattr -d com.apple.quarantine "$APP" 2>/dev/null || true

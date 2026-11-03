@@ -118,6 +118,11 @@ enum ZmanEngine {
         return jc
     }
 
+    /// "שבת הגדול" – KosherSwift gives the special Shabbos names without the word (הגדול, שובה, שקלים…).
+    static func specialShabbos(_ s: String) -> String {
+        s.isEmpty || s.hasPrefix("שבת") ? s : "שבת " + s
+    }
+
     /// "ראש חודש אייר". KosherSwift's formatRoshChodesh names the wrong month on the 30th (30 Nisan → ניסן),
     /// so name the month of the day that starts it instead: on the 30th, that's tomorrow's month.
     static func roshChodesh(_ jc: JewishCalendar, day: Date, settings: AppSettings) -> String {
@@ -144,7 +149,7 @@ enum ZmanEngine {
 
         var events: [String] = []
         for s in [f.formatYomTov(jewishCalendar: jc), roshChodesh(jc, day: day, settings: settings),
-                  f.formatOmer(jewishCalendar: jc), f.formatSpecialParsha(jewishCalendar: jc)] where !s.isEmpty {
+                  f.formatOmer(jewishCalendar: jc), specialShabbos(f.formatSpecialParsha(jewishCalendar: jc))] where !s.isEmpty {
             // formatYomTov writes ל"ג בעומר / ט"ו בשבט with ASCII quotes, formatOmer with gershayim.
             var s = s.replacingOccurrences(of: "\"", with: "״").replacingOccurrences(of: "'", with: "׳")
             if jc.getIsMukafChoma() {    // in Jerusalem the 15th is Purim itself
@@ -278,13 +283,16 @@ struct ZmanFormat {
         return String(format: "%d:%02d", h, m)
     }
 
-    /// "1:05" style countdown, always with seconds below one hour.
+    /// A countdown that follows the seconds setting, and whose numbers always mean the same thing:
+    /// with seconds "2:05:12" / "7:52" (minutes:seconds); without, "2:05" (hours:minutes) / "8 דק׳".
+    /// Without seconds the minutes round up – "8 דק׳" until the last 7 – so it changes on the minute.
     static func countdown(_ t: TimeInterval, showSeconds: Bool) -> String {
-        let total = max(0, Int(t))
-        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
-        if showSeconds || h == 0 && m < 10 {
+        if showSeconds {
+            let total = max(0, Int(t))
+            let h = total / 3600, m = (total % 3600) / 60, s = total % 60
             return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
         }
-        return String(format: "%d:%02d", h, m)
+        let minutes = max(0, Int((t / 60).rounded(.up)))
+        return minutes < 60 ? "\(minutes) דק׳" : String(format: "%d:%02d", minutes / 60, minutes % 60)
     }
 }

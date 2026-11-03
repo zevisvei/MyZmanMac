@@ -294,11 +294,30 @@ struct AppSettings: Codable, Hashable {
 
     var inIsrael: Bool { inIsraelOverride ?? location.isInIsrael }
 
+    /// Whether anything the widgets show differs (reminders, calendar sync, the menu bar's look and the app's
+    /// appearance don't reach them).
+    func affectsWidgets(comparedTo other: AppSettings) -> Bool {
+        func shown(_ s: AppSettings) -> AppSettings {
+            var s = s
+            s.reminders = []
+            s.calendarSync = CalendarSyncOptions()
+            s.menuBar = MenuBarOptions()
+            s.appearance = .system
+            s.customLocations = []
+            return s
+        }
+        return shown(self) != shown(other)
+    }
+
     var candleLightingOffset: Int { candleLightingMinutes ?? Self.localCandleLighting(location) }
 
+    /// The local custom: Jerusalem and Petach Tikva 40 minutes, Haifa and Zichron Ya'akov 30, the rest of
+    /// Israel 20 (as most Israeli luachs and Hebcal), elsewhere 18.
     static func localCandleLighting(_ loc: Location) -> Int {
-        let name = loc.nameEn.lowercased()
-        return name.contains("jerusalem") ? 40 : name.contains("haifa") ? 30 : 18
+        let name = loc.nameEn.lowercased() + " " + loc.nameHe
+        if loc.isJerusalem || name.contains("petah tikva") || name.contains("פתח תקו") { return 40 }
+        if name.contains("haifa") || name.contains("חיפה") || name.contains("zichron") || name.contains("זכרון יעקב") { return 30 }
+        return loc.isInIsrael ? 20 : 18
     }
 
     init() {}
@@ -339,13 +358,24 @@ struct AppSettings: Codable, Hashable {
 
     private static let key = "settings.v1"
 
+    /// Only the installed app keeps settings. A development build (`swift run`, `--preview`, `--dump`) has no bundle
+    /// or a different one, and must not write – the widget reads the shared file and would show its defaults.
+    static var persists: Bool {
+        Bundle.main.bundleIdentifier == "com.myzman.mac" && !CommandLine.arguments.contains("--preview")
+    }
+
     static func load() -> AppSettings {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let s = try? JSONDecoder().decode(AppSettings.self, from: data) else { return AppSettings() }
+        guard let data = UserDefaults.standard.data(forKey: key) else { return AppSettings() }
+        guard let s = try? JSONDecoder().decode(AppSettings.self, from: data) else {
+            // Unreadable (decoding is lenient, so this means corrupted): keep a copy before the defaults replace it.
+            if persists { UserDefaults.standard.set(data, forKey: key + ".unreadable") }
+            return AppSettings()
+        }
         return s
     }
 
     func save() {
+        guard Self.persists else { return }
         if let data = try? JSONEncoder().encode(self) {
             UserDefaults.standard.set(data, forKey: Self.key)
             // Copy for the (sandboxed) widget, which may read only this folder.

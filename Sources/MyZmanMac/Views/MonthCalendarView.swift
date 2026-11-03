@@ -3,6 +3,8 @@ import SwiftUI
 /// A Hebrew month grid (like Itim's tray calendar). Clicking a day shows its zmanim.
 struct MonthCalendarView: View {
     @EnvironmentObject var model: AppModel
+    /// Observed so the blue "has events" dots follow changes in the calendar database.
+    @ObservedObject private var sync = CalendarSync.shared
     let onPick: () -> Void
     @ViewState private var monthOffset = 0
 
@@ -20,17 +22,17 @@ struct MonthCalendarView: View {
         let lead = cal.component(.weekday, from: monthStart) - 1
         let dates = (0..<days).map { cal.date(byAdding: .day, value: $0, to: monthStart)! }
         let mid = model.dayInfo(dates[14])
-        let _ = CalendarSync.shared.version
-        let busyDays = Set(CalendarSync.shared.busyDays(from: monthStart, to: cal.date(byAdding: .day, value: days, to: monthStart)!,
+        let _ = sync.version
+        let busyDays = Set(sync.busyDays(from: monthStart, to: cal.date(byAdding: .day, value: days, to: monthStart)!,
                                                         tz: model.tz, options: model.settings.calendarSync).map { model.dayKey($0) })
         let monthTitle = mid.hebrewDate.split(separator: " ").dropFirst().joined(separator: " ")
         let greg = "\(model.format.localizedDate(dates.first!, template: "MMM")) – \(model.format.localizedDate(dates.last!, template: "MMMyyyy"))"
 
         VStack(spacing: 8) {
             HStack {
-                Button { shiftYear(-1, from: anchor) } label: { Image(systemName: "chevron.right.2") }
+                Button { shiftYear(-1, from: anchor) } label: { Label("שנה קודמת", systemImage: "chevron.right.2").labelStyle(.iconOnly) }
                     .buttonStyle(.borderless).help("שנה קודמת")
-                Button { monthOffset -= 1 } label: { Image(systemName: "chevron.right") }
+                Button { monthOffset -= 1 } label: { Label("חודש קודם", systemImage: "chevron.right").labelStyle(.iconOnly) }
                     .buttonStyle(.borderless).help("חודש קודם")
                 Spacer()
                 Menu {
@@ -45,9 +47,9 @@ struct MonthCalendarView: View {
                 .fixedSize()
                 .help("בחירת חודש")
                 Spacer()
-                Button { monthOffset += 1 } label: { Image(systemName: "chevron.left") }
+                Button { monthOffset += 1 } label: { Label("חודש הבא", systemImage: "chevron.left").labelStyle(.iconOnly) }
                     .buttonStyle(.borderless).help("חודש הבא")
-                Button { shiftYear(1, from: anchor) } label: { Image(systemName: "chevron.left.2") }
+                Button { shiftYear(1, from: anchor) } label: { Label("שנה הבאה", systemImage: "chevron.left.2").labelStyle(.iconOnly) }
                     .buttonStyle(.borderless).help("שנה הבאה")
             }
 
@@ -56,7 +58,7 @@ struct MonthCalendarView: View {
                 Text(greg).font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Menu("מועדים") {
-                    ForEach(upcomingEvents(from: anchor), id: \.date) { e in
+                    ForEach(upcomingEvents(from: monthStart), id: \.date) { e in
                         Button(e.title) { jump(to: e.date) }
                     }
                 }
@@ -88,11 +90,15 @@ struct MonthCalendarView: View {
 
             // Floating card: the selected day's calendar events (its date and details are in the day header above).
             VStack(alignment: .trailing, spacing: 4) {
-                ScrollView {
-                    DayEventsSection(date: model.selectedDate, embedded: true)
+                if model.settings.calendarSync.showCalendarEvents {
+                    ScrollView {
+                        DayEventsSection(date: model.selectedDate, embedded: true)
+                    }
+                    .scrollIndicators(.never)
+                    .frame(maxHeight: 140)
+                } else {
+                    DayEventsSection(date: model.selectedDate, embedded: true)   // only for "new event on this day"
                 }
-                .scrollIndicators(.never)
-                .frame(maxHeight: 140)
                 Button("זמני היום ←", action: onPick).buttonStyle(.link).font(.caption)
             }
             .padding(10)
@@ -194,8 +200,10 @@ private struct DayCell: View {
                 if hasCalendarEvent { Circle().fill(.blue).frame(width: 5, height: 5).padding(4) }
             }
             .contentShape(Rectangle())
-            .onTapGesture(count: 2, perform: open)
+            // Select at once on a click (a double-tap gesture placed first would hold every click back by the
+            // double-click interval), and open the day's zmanim on a double click.
             .onTapGesture(perform: select)
+            .simultaneousGesture(TapGesture(count: 2).onEnded(open))
             .help((info.events + [info.parsha]).filter { !$0.isEmpty }.joined(separator: "\n"))
     }
 }

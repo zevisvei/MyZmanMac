@@ -153,7 +153,9 @@ public class TefilaRules {
                                                                                                 && !tachanunRecited13SivanOutOfIsrael ? 14: 13)))
             // MyZman patch (from KosherJava 0b6b95c): no Tachanun on any Erev Yom Tov, including Erev Rosh Hashana.
             || jewishCalendar.isErevYomTov()
-            || (jewishCalendar.isYomTov() && (!jewishCalendar.isTaanis()
+            // MyZman patch: Yom HaShoah and Yom HaZikaron count as "yom tov" in isYomTov(), but Tachanun is said on them.
+            || (jewishCalendar.isYomTov() && holidayIndex != JewishCalendar.YOM_HASHOAH && holidayIndex != JewishCalendar.YOM_HAZIKARON
+                && (!jewishCalendar.isTaanis()
                                               || (!tachanunRecitedPesachSheni && holidayIndex == JewishCalendar.PESACH_SHENI))) // Erev YT is included in isYomTov()
             || (!jewishCalendar.getInIsrael() && !tachanunRecitedPesachSheni && !tachanunRecited15IyarOutOfIsrael
                 && jewishCalendar.getJewishMonth() == JewishCalendar.IYAR && day == 15)
@@ -181,8 +183,12 @@ public class TefilaRules {
      * @see #isTachanunRecitedShacharis(JewishCalendar)
      */
     public func isTachanunRecitedMincha(jewishCalendar:JewishCalendar) -> Bool {
-        let tomorrow = JewishCalendar();
-        tomorrow.workingDate = jewishCalendar.workingDate
+        // MyZman patch: tomorrow with today's settings (Israel, modern holidays, mukaf choma) – a default calendar
+        // missed e.g. the eve of Yom HaAtzmaut / Yom Yerushalayim and Jerusalem's Purim.
+        let tomorrow = JewishCalendar(workingDate: jewishCalendar.workingDate, timezone: jewishCalendar.timeZone,
+                                      inIsrael: jewishCalendar.getInIsrael(), useModernHolidays: jewishCalendar.isUseModernHolidays())
+        tomorrow.isMukafChoma = jewishCalendar.isMukafChoma
+        tomorrow.isSafekMukafChoma = jewishCalendar.isSafekMukafChoma
         tomorrow.forward()
         
         if (!tachanunRecitedMinchaAllYear

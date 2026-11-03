@@ -18,7 +18,7 @@ final class CalendarSync: ObservableObject {
 
     /// Whether the sync wrote this event (and so may delete it).
     static func isSynced(_ e: EKEvent) -> Bool {
-        e.url == syncURL || e.notes?.contains(syncMarker) == true
+        e.url?.absoluteString.hasPrefix(syncURL.absoluteString) == true || e.notes?.contains(syncMarker) == true
     }
 
     let store = EKEventStore()
@@ -125,46 +125,68 @@ final class CalendarSync: ObservableObject {
 
     /// Replaces previously synced events in the target calendar. Returns the number of events written.
     @discardableResult
-    func sync(_ settings: AppSettings, options: CalendarSyncOptions) async throws -> Int {
+    func sync(_ settings: AppSettings, options: CalendarSyncOptions, onlyIfEnabled: Bool = false) async throws -> Int {
         guard try await requestAccess() else { throw Failure.denied }
+        // An automatic sync that waited for access while sync was turned off (and its events removed) must not write.
+        if onlyIfEnabled, !AppModel.shared.settings.calendarSync.enabled { return 0 }
         let cal = try target(options)
-        let tzCal = ZmanEngine.gregorian(settings.location.timeZone)
+        let tz = settings.location.timeZone
+        let tzCal = ZmanEngine.gregorian(tz)
         let start = tzCal.startOfDay(for: Date())
-
-        // Only from today on: past days are left as they were written, since they aren't rewritten.
         let to = tzCal.date(byAdding: .day, value: 400, to: start)!
+
+        // Each event carries a key of everything it shows (in its URL): only what changed is removed and added,
+        // instead of rewriting every event each time (slow, and churn for iCloud / Google). Past days are left
+        // as they were written.
+        var wanted: [String: Item] = [:]
+        for item in events(settings, options: options) { wanted[Self.key(item, tz: tz, alert: options.alertMinutes)] = item }
+        var kept = Set<String>()
+        var added = 0
         do {
             for e in store.events(matching: store.predicateForEvents(withStart: start, end: to, calendars: [cal]))
             where Self.isSynced(e) {
+                // Older events (no key) and duplicates go; current ones stay.
+                if let key = Self.key(of: e), wanted[key] != nil, kept.insert(key).inserted { continue }
                 try store.remove(e, span: .thisEvent, commit: false)
             }
-
-            var count = 0
-            for event in events(settings, options: options) {
+            for (key, item) in wanted where !kept.contains(key) {
                 let e = EKEvent(eventStore: store)
                 e.calendar = cal
-                e.title = event.title
-                e.notes = (event.notes.map { $0 + "\n" } ?? "") + Self.syncMarker
-                e.url = Self.syncURL
-                e.isAllDay = event.allDay
-                let start = event.allDay ? Self.allDayDate(event.start, in: settings.location.timeZone) : event.start
+                e.title = item.title
+                e.notes = (item.notes.map { $0 + "\n" } ?? "") + Self.syncMarker
+                e.url = URL(string: Self.syncURL.absoluteString + "/" + key)
+                e.isAllDay = item.allDay
+                let start = item.allDay ? Self.allDayDate(item.start, in: tz) : item.start
                 e.startDate = start
-                e.endDate = event.allDay ? start : start.addingTimeInterval(60)
-                e.timeZone = event.allDay ? nil : settings.location.timeZone
+                e.endDate = item.allDay ? start : start.addingTimeInterval(60)
+                e.timeZone = item.allDay ? nil : tz
                 e.availability = .free
-                if !event.allDay, let m = options.alertMinutes {
+                if !item.allDay, let m = options.alertMinutes {
                     e.addAlarm(EKAlarm(relativeOffset: -Double(m * 60)))
                 }
                 try store.save(e, span: .thisEvent, commit: false)
-                count += 1
+                added += 1
             }
             try store.commit()
-            return count
+            return added
         } catch {
             // Drop the half-done batch, so a later commit (e.g. adding an event) doesn't apply it.
             store.reset()
             throw error
         }
+    }
+
+    /// A stable key for a synced event: what it shows, when, and its alert.
+    private static func key(_ item: Item, tz: TimeZone, alert: Int?) -> String {
+        var h: UInt64 = 0xcbf29ce484222325       // FNV-1a
+        let text = "\(item.allDay)|\(item.title)|\(item.notes ?? "")|\(Int(item.start.timeIntervalSince1970))|\(tz.identifier)|\(alert ?? -1)"
+        for b in text.utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
+        return String(h, radix: 16)
+    }
+
+    private static func key(of e: EKEvent) -> String? {
+        guard let url = e.url?.absoluteString, url.hasPrefix(syncURL.absoluteString + "/") else { return nil }
+        return String(url.dropFirst(syncURL.absoluteString.count + 1))
     }
 
     /// Removes everything the sync wrote. Only marked events are deleted; the dedicated calendar itself
@@ -183,14 +205,19 @@ final class CalendarSync: ObservableObject {
                                              end: now.addingTimeInterval(400 * 86_400), calendars: [cal])
         let events = store.events(matching: range)
         var remaining = 0
-        for e in events {
-            if Self.isSynced(e) {
-                try store.remove(e, span: .thisEvent, commit: false)
-            } else {
-                remaining += 1
+        do {
+            for e in events {
+                if Self.isSynced(e) {
+                    try store.remove(e, span: .thisEvent, commit: false)
+                } else {
+                    remaining += 1
+                }
             }
+            try store.commit()
+        } catch {
+            store.reset()   // don't leave a half-done batch for the next commit
+            throw error
         }
-        try store.commit()
         if options.targetCalendarID == nil, remaining == 0, UserDefaults.standard.bool(forKey: createdKey) {
             try store.removeCalendar(cal, commit: true)
             UserDefaults.standard.removeObject(forKey: calendarIDKey)
@@ -227,15 +254,20 @@ final class CalendarSync: ObservableObject {
         hebrew.timeZone = timeZone
         let clock = ZmanEngine.gregorian(timeZone).dateComponents([.hour, .minute], from: new.start)
         var written: [Date] = []
-        for y in fromYear..<(fromYear + years) {
-            guard let day = HebrewDates.anniversary(of: original, in: y, rule: rule, calendar: hebrew) else { continue }
-            var e = new
-            e.start = new.allDay ? day : ZmanEngine.gregorian(timeZone).date(bySettingHour: clock.hour ?? 9,
-                                                                              minute: clock.minute ?? 0, second: 0, of: day)!
-            try save(e, in: cal, timeZone: timeZone, commit: false)
-            written.append(day)
+        do {
+            for y in fromYear..<(fromYear + years) {
+                guard let day = HebrewDates.anniversary(of: original, in: y, rule: rule, calendar: hebrew) else { continue }
+                var e = new
+                e.start = new.allDay ? day : ZmanEngine.gregorian(timeZone).date(bySettingHour: clock.hour ?? 9,
+                                                                                  minute: clock.minute ?? 0, second: 0, of: day)!
+                try save(e, in: cal, timeZone: timeZone, commit: false)
+                written.append(day)
+            }
+            try store.commit()
+        } catch {
+            store.reset()   // all or nothing: no half the years written by the next commit
+            throw error
         }
-        try store.commit()
         return written
     }
 
@@ -269,8 +301,9 @@ final class CalendarSync: ObservableObject {
         let title: String
         /// Where it's shown: for all-day events, the day's midnight in the location's zone.
         let start: Date
-        /// The event's own start date in EventKit.
+        /// The event's own start and end dates in EventKit (this occurrence's).
         let eventStart: Date
+        let eventEnd: Date
         let allDay: Bool
         let color: NSColor
         let calendar: String
@@ -311,7 +344,7 @@ final class CalendarSync: ObservableObject {
             return DayEvent(id: e.calendarItemIdentifier + "\(e.startDate.timeIntervalSince1970)",
                             eventID: e.eventIdentifier ?? "", itemID: e.calendarItemIdentifier,
                             canDelete: e.calendar.allowsContentModifications,
-                            title: e.title ?? "", start: shown, eventStart: e.startDate, allDay: e.isAllDay,
+                            title: e.title ?? "", start: shown, eventStart: e.startDate, eventEnd: e.endDate, allDay: e.isAllDay,
                             color: e.calendar.color ?? .systemBlue, calendar: e.calendar.title)
         }
         .sorted { ($0.allDay ? 0 : 1, $0.start) < ($1.allDay ? 0 : 1, $1.start) }
@@ -323,10 +356,11 @@ final class CalendarSync: ObservableObject {
         var days: [Date] = []
         for e in userEvents(from: start, to: end, tz: tz, options: options) {
             days.append(e.start)
-            // Multi-day all-day events mark every day they cover.
-            guard e.allDay, let ev = store.event(withIdentifier: e.eventID) else { continue }
+            // Multi-day all-day events mark every day they cover. (This occurrence's dates: looking the event up
+            // by identifier would give a recurring series' first occurrence.)
+            guard e.allDay else { continue }
             let last = loc.date(from: Calendar.current.dateComponents([.year, .month, .day],
-                                                                       from: max(ev.startDate, ev.endDate.addingTimeInterval(-1))))
+                                                                       from: max(e.eventStart, e.eventEnd.addingTimeInterval(-1))))
             var d = e.start
             while let next = loc.date(byAdding: .day, value: 1, to: d), let last, next <= last, next < end {
                 days.append(next); d = next

@@ -45,24 +45,42 @@ enum SpecialTimes {
         if tomorrow.isYomKippur() || tomorrow.isTishaBav() {
             out.append(SpecialTime(title: "תחילת הצום", time: round(ZmanEngine.sunset(on: day, settings: s), .deadline, s), note: "בשקיעה", symbol: "moon"))
         }
-        if jc.isTaanis() {
+        if jc.isTaanis() || jc.isTaanisBechoros() {
             if !jc.isYomKippur() && !jc.isTishaBav() {
-                out.append(SpecialTime(title: "תחילת הצום", time: zman(s.fastStartDefID, on: day, s, kind: .deadline),
-                                       note: ZmanCatalog.def(s.fastStartDefID)?.he ?? "", symbol: "sunrise"))
+                // Far north in summer there may be no alos at the chosen depression: then 72 minutes before sunrise.
+                let chosen = zman(s.fastStartDefID, on: day, s, kind: .deadline)
+                let start = chosen ?? zman("GetAlos72", on: day, s, kind: .deadline)
+                let note = chosen != nil ? ZmanCatalog.def(s.fastStartDefID)?.he ?? ""
+                    : "אין \(ZmanCatalog.def(s.fastStartDefID)?.he ?? "עלות השחר") היום – לפי 72 דקות לפני הנץ"
+                out.append(SpecialTime(title: jc.isTaanisBechoros() ? "תחילת תענית בכורות" : "תחילת הצום", time: start,
+                                       note: note, symbol: "sunrise"))
             }
-            if !jc.isYomKippur() {
+            if !jc.isYomKippur() && !jc.isTaanisBechoros() {   // the firstborn's fast ends at the seder (or a siyum)
                 out.append(SpecialTime(title: "סוף הצום", time: zman(s.fastEndDefID, on: day, s, kind: .earliest),
                                        note: ZmanCatalog.def(s.fastEndDefID)?.he ?? "", symbol: "fork.knife"))
             }
         }
 
-        // Erev Pesach.
+        // Erev Pesach. When it's on Shabbos the chametz is burned on Friday (SA OC 444:2), at the usual time of
+        // day; on Shabbos itself what's left is eaten by the deadline and then nullified.
+        let f = ZmanFormat(s)
         if jc.getJewishMonth() == JewishCalendar.NISSAN, jc.getJewishDayOfMonth() == 14 {
-            let f = ZmanFormat(s)
             out.append(SpecialTime(title: "סוף זמן אכילת חמץ", time: round(czc.getSofZmanAchilasChametzGRA(), .deadline, s),
                                    note: "גר״א · מג״א \(f.time(round(czc.getSofZmanAchilasChametzMGA72Minutes(), .deadline, s)))", symbol: "takeoutbag.and.cup.and.straw"))
-            out.append(SpecialTime(title: "סוף זמן ביעור חמץ", time: round(czc.getSofZmanBiurChametzGRA(), .deadline, s),
-                                   note: "גר״א · מג״א \(f.time(round(czc.getSofZmanBiurChametzMGA72Minutes(), .deadline, s)))", symbol: "flame"))
+            if jc.getDayOfWeek() == 7 {
+                out.append(SpecialTime(title: "סוף זמן ביטול חמץ", time: round(czc.getSofZmanBiurChametzGRA(), .deadline, s),
+                                       note: "שבת – השריפה הייתה ביום שישי", symbol: "flame"))
+            } else {
+                out.append(SpecialTime(title: "סוף זמן ביעור חמץ", time: round(czc.getSofZmanBiurChametzGRA(), .deadline, s),
+                                       note: "גר״א · מג״א \(f.time(round(czc.getSofZmanBiurChametzMGA72Minutes(), .deadline, s)))", symbol: "flame"))
+            }
+        }
+        if jc.getJewishMonth() == JewishCalendar.NISSAN, jc.getJewishDayOfMonth() == 13, tomorrow.getDayOfWeek() == 7 {
+            // KosherSwift's chametz zmanim are only for the 14th: take the same hours of this day.
+            let biur = czc.getShaahZmanisGra() == Int64.min ? nil
+                : czc.getElevationAdjustedSunrise().map { $0.addingTimeInterval(Double(czc.getShaahZmanisGra()) * 5 / 1000) }
+            out.append(SpecialTime(title: "שריפת חמץ (ערב פסח חל בשבת)", time: round(biur, .deadline, s),
+                                   note: "בשעה שבה היו שורפים בערב פסח (גר״א)", symbol: "flame"))
         }
 
         // Candle lighting tonight, and the end of Shabbos / Yom Tov.
@@ -74,7 +92,8 @@ enum SpecialTimes {
                                    symbol: "flame"))
         }
         if jc.isAssurBemelacha() && !tomorrow.isAssurBemelacha() {
-            out.append(SpecialTime(title: jc.getDayOfWeek() == 7 ? "צאת השבת" : "צאת החג", time: havdalah(on: day, s),
+            let title = jc.getDayOfWeek() == 7 ? (jc.isYomTovAssurBemelacha() ? "צאת השבת והחג" : "צאת השבת") : "צאת החג"
+            out.append(SpecialTime(title: title, time: havdalah(on: day, s),
                                    note: ZmanCatalog.def(s.havdalahDefID)?.he ?? "", symbol: "sparkles"))
         }
 

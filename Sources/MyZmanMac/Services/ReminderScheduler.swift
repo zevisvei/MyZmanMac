@@ -5,11 +5,23 @@ import UserNotifications
 /// Rescheduled whenever settings change and when the day rolls over, so the window keeps moving
 /// (notifications already scheduled fire even while the app isn't running).
 @MainActor
-final class ReminderScheduler {
+final class ReminderScheduler: NSObject, UNUserNotificationCenterDelegate {
     static let shared = ReminderScheduler()
     // Notifications need an app bundle; a bare `swift run` binary has none.
     private lazy var center = UNUserNotificationCenter.current()
     private let available = Bundle.main.bundleIdentifier != nil
+
+    private override init() {
+        super.init()
+        // Without a delegate, macOS drops a notification that fires while the app is in front (its popover or a
+        // window open): show it then too.
+        if available { center.delegate = self }
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound, .list])
+    }
     private let daysAhead = 14
     /// macOS keeps at most 64 pending notifications per app.
     private let maxPending = 60
