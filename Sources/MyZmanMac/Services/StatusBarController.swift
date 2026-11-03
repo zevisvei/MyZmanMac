@@ -150,14 +150,19 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
                 NSApp.setActivationPolicy(.accessory)
                 regularAfterClose = true
             }
+            if let front, fromBackground, !behind.isEmpty {
+                // Activation (asynchronous) orders our windows to the front: put them back in the same turn of the
+                // run loop, before anything is drawn – later would show them flashing.
+                var token: NSObjectProtocol?
+                token = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                               object: nil, queue: nil) { [weak self] _ in
+                    if let token { NotificationCenter.default.removeObserver(token) }
+                    MainActor.assumeIsolated { self?.keepWindowsBehind(behind, below: front) }
+                }
+            }
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
-            if let front, fromBackground {
-                keepWindowsBehind(behind, below: front)
-                // Activation completes asynchronously and may bring them forward again.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.keepWindowsBehind(behind, below: front) }
-            }
         }
         log.debug("popover shown: \(popover.isShown, privacy: .public)")
         return true
