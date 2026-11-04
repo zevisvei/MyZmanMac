@@ -5,7 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP=build/MyZman.app
-VERSION="${VERSION:-1.0.0}"
+# The latest release's version by default, so a local build isn't offered that release as an update.
+LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo v1.0.0)
+VERSION="${VERSION:-${LAST_TAG#v}}"
 # Must increase with every build so macOS (and the widget system) picks up the new one.
 BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
 

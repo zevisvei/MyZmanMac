@@ -82,6 +82,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     /// state. Instead: an action within a moment after the popover closed belongs to the press that closed it.
     private var closedAt: TimeInterval?
     private static let sameClick: TimeInterval = 0.4
+    /// When the popover last closed, for any reason (see widgetClicked).
+    private var lastClosedAt: TimeInterval = 0
 
     @objc private func toggle(_ sender: Any?) {
         let now = ProcessInfo.processInfo.systemUptime
@@ -125,8 +127,10 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             && event?.window.map { $0.level == .normal && $0.isVisible } == true
         restoreFocus = !intoOurWindow
         closedAt = nil
+        lastClosedAt = ProcessInfo.processInfo.systemUptime
         // Only when the popover closes with the mouse over the menu bar item: a press there may be on its way.
-        guard let button = item?.button, let window = button.window else { return }
+        // Not when the press itself reached the app and closed it (the app was active): its action doesn't follow.
+        guard let button = item?.button, let window = button.window, event?.window !== window else { return }
         let frame = window.convertToScreen(button.convert(button.bounds, to: nil)).insetBy(dx: -2, dy: -4)
         if frame.contains(NSEvent.mouseLocation) { closedAt = ProcessInfo.processInfo.systemUptime }
         log.debug("willClose onItem=\(self.closedAt != nil, privacy: .public) event=\(NSApp.currentEvent?.type.rawValue ?? 0, privacy: .public) buttons=\(NSEvent.pressedMouseButtons, privacy: .public)")
@@ -139,6 +143,10 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         guard let button = item?.button, button.window?.occlusionState.contains(.visible) == true else { return false }
         let popover = self.popover ?? makePopover()
         if !popover.isShown {
+            // Back on today when it's opened again a while later (not after a quick close and reopen).
+            if ProcessInfo.processInfo.systemUptime - lastClosedAt > 10 * 60, !AppModel.shared.isToday(AppModel.shared.selectedDate) {
+                AppModel.shared.selectedDate = Date()
+            }
             let front = NSWorkspace.shared.frontmostApplication
             let fromBackground = !NSApp.isActive && front != nil && front != NSRunningApplication.current
             previousApp = fromBackground ? front : nil
@@ -169,6 +177,17 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     func closePopover() { popover?.performClose(nil) }
+
+    /// A click on a widget (myzman://open) toggles the popover, like the menu bar item. The press on the widget
+    /// already closed the transient popover, and the URL only arrives after the mouse is up: a popover that closed
+    /// a moment ago was closed by this same click, so it stays closed. True if handled (nothing more to open).
+    func widgetClicked() -> Bool {
+        if popover?.isShown == true {
+            popover?.performClose(nil)
+            return true
+        }
+        return item != nil && ProcessInfo.processInfo.systemUptime - lastClosedAt < 1
+    }
 
     /// Drop the popover's content when it closes: nothing in it keeps updating in the background, and it's
     /// rebuilt (on the current day) the next time it opens.

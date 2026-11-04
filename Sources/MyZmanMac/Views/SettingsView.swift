@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UserNotifications
 
 struct SettingsView: View {
     @ViewState private var tab: Int
@@ -121,6 +122,7 @@ private struct GeneralSettings: View {
                     }
                 if let loginError { Text(loginError).font(.caption).foregroundStyle(.red) }
             }
+            if Updater.canUpdate { UpdateSection() }
             Section("ייצוא לוח זמנים") {
                 DatePicker("מתאריך", selection: $exportFrom, displayedComponents: .date)
                     .environment(\.timeZone, model.tz)
@@ -137,6 +139,37 @@ private struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct UpdateSection: View {
+    @ObservedObject private var updater = Updater.shared
+    @AppStorage(Updater.autoCheckKey) private var autoCheck = true
+
+    var body: some View {
+        Section("עדכונים") {
+            Toggle("בדוק עדכונים אוטומטית (פעם ביום)", isOn: $autoCheck)
+            HStack {
+                Text("הגרסה המותקנת: \(Updater.currentVersion)")
+                Spacer()
+                switch updater.state {
+                case .checking, .installing:
+                    ProgressView().controlSize(.small)
+                    Text(updater.state == .installing ? "מתקין…" : "בודק…").foregroundStyle(.secondary)
+                case .available(let r), .installFailed(let r, _):
+                    Link("מה חדש", destination: r.page)
+                    Button("עדכן לגרסה \(r.version)") { Task { await updater.install(r) } }
+                        .buttonStyle(.borderedProminent)
+                default:
+                    if updater.state == .upToDate { Text("זו הגרסה האחרונה").foregroundStyle(.secondary) }
+                    Button("בדוק עכשיו") { Task { await updater.check() } }
+                }
+            }
+            if let message = updater.state.error {
+                Text(message).font(.caption).foregroundStyle(.red)
+                Link("להורדה מהאתר", destination: Updater.releasesPage).font(.caption)
+            }
+        }
     }
 }
 
@@ -228,9 +261,12 @@ private struct LocationSettings: View {
     @ViewState private var search = ""
     @ViewState private var draft = Location(nameHe: "", nameEn: "", region: .custom, latitude: 31.778, longitude: 35.235,
                                         elevation: 0, timeZoneID: TimeZone.current.identifier)
+    /// The custom location the form was filled from, which "save" replaces (wherever it's used); nil for a new one.
+    @ViewState private var editing: Location?
     @ViewState private var locating = false
     @ViewState private var error: String?
-    @ViewState private var locator = LocationService()
+    /// Made on first use: a default value here would build a location manager each time the view is re-created.
+    @ViewState private var locator: LocationService?
 
     private var results: [Location] {
         let all = model.settings.customLocations.sorted { $0.displayName < $1.displayName }
@@ -259,13 +295,15 @@ private struct LocationSettings: View {
                         if loc == model.settings.location { Image(systemName: "checkmark").foregroundStyle(.tint) }
                     }
                     .contentShape(Rectangle())
-                    .onTapGesture { model.select(location: loc); draft = loc }
+                    .onTapGesture { model.select(location: loc); fill(from: loc) }
                     .contextMenu {
                         Button(favorite ? "הסר מהמועדפים" : "הוסף למועדפים") { toggleFavorite(loc) }
                         if loc.region == .custom {
                             Button("מחק") {
                                 model.settings.customLocations.removeAll { $0 == loc }
                                 model.settings.favoriteLocations.removeAll { $0 == loc }
+                                model.settings.compareLocations.removeAll { $0 == loc }
+                                if editing == loc { editing = nil }
                             }
                         }
                     }
@@ -293,19 +331,10 @@ private struct LocationSettings: View {
                     }
                     HStack {
                         Button("שמור ובחר") {
-                            var loc = draft
-                            loc.region = .custom
-                            if loc.nameHe.isEmpty { loc.nameHe = "מיקום שלי" }
-                            loc.nameEn = loc.nameEn.isEmpty ? loc.nameHe : loc.nameEn
-                            model.settings.customLocations.removeAll { $0.displayName == loc.displayName }
-                            model.settings.customLocations.append(loc)
-                            // An edited favorite stays a favorite, with its new details.
-                            if let i = model.settings.favoriteLocations.firstIndex(where: {
-                                $0.region == .custom && $0.displayName == loc.displayName
-                            }) {
-                                model.settings.favoriteLocations[i] = loc
-                            }
-                            model.select(location: loc)
+                            // A number typed but not yet committed (no Return, the field still focused) is written to
+                            // the draft when editing ends: end it first, and save on the next turn.
+                            NSApp.keyWindow?.makeFirstResponder(nil)
+                            DispatchQueue.main.async { save() }
                         }
                         .disabled(!coordinatesValid)
                         Button(locating ? "מאתר…" : "המיקום הנוכחי שלי") { locate() }.disabled(locating)
@@ -328,7 +357,46 @@ private struct LocationSettings: View {
             }
             .formStyle(.grouped)
         }
-        .onAppear { draft = model.settings.location }
+        .onAppear { fill(from: model.settings.location) }
+    }
+
+    private func fill(from loc: Location) {
+        draft = loc
+        editing = loc.region == .custom ? loc : nil
+        error = nil
+    }
+
+    private func save() {
+        guard coordinatesValid else { return }
+        var loc = draft
+        loc.region = .custom
+        if loc.nameHe.isEmpty { loc.nameHe = "מיקום שלי" }
+        // The English name follows a renamed location (it's only a copy of the Hebrew one for custom locations).
+        if loc.nameEn.isEmpty || loc.nameEn == editing?.nameHe { loc.nameEn = loc.nameHe }
+        var s = model.settings
+        // Replace the location being edited, or one of the same name; everywhere it's used, so an edited favorite
+        // stays a favorite and the compare tab shows the new details.
+        let old = editing ?? s.customLocations.first { $0.displayName == loc.displayName }
+        let same: (Location) -> Bool = { $0 == old || ($0.region == .custom && $0.displayName == loc.displayName) }
+        if let i = s.customLocations.firstIndex(where: same) {
+            s.customLocations[i] = loc
+            s.customLocations.removeAll { $0 != loc && same($0) }
+        } else {
+            s.customLocations.append(loc)
+        }
+        s.favoriteLocations = s.favoriteLocations.map { same($0) ? loc : $0 }
+        s.compareLocations = s.compareLocations.map { same($0) ? loc : $0 }
+        // An imported visible sunrise table goes along with the location when its coordinates are corrected.
+        if let old {
+            let oldKey = VisibleSunriseTable.key(latitude: old.latitude, longitude: old.longitude)
+            let newKey = VisibleSunriseTable.key(latitude: loc.latitude, longitude: loc.longitude)
+            if oldKey != newKey, s.visibleSunrise[newKey] == nil, let t = s.visibleSunrise.removeValue(forKey: oldKey) {
+                s.visibleSunrise[newKey] = t
+            }
+        }
+        model.settings = s
+        model.select(location: loc)
+        editing = loc
     }
 
     private func toggleFavorite(_ loc: Location) {
@@ -340,6 +408,7 @@ private struct LocationSettings: View {
     }
 
     private func newLocation() {
+        editing = nil
         let here = model.settings.location
         draft = Location(nameHe: "", nameEn: "", region: .custom, latitude: here.latitude, longitude: here.longitude,
                          elevation: 0, timeZoneID: here.timeZoneID)
@@ -354,7 +423,9 @@ private struct LocationSettings: View {
         locating = true
         error = nil
         Task {
-            do { draft = try await locator.currentLocation() } catch { self.error = error.localizedDescription }
+            let locator = self.locator ?? LocationService()
+            self.locator = locator
+            do { draft = try await locator.currentLocation(); editing = nil } catch { self.error = error.localizedDescription }
             locating = false
         }
     }
@@ -613,6 +684,61 @@ private struct ZmanNameField: View {
 
 // MARK: - Reminders
 
+/// Two weeks of planned alerts: worked out again only when the settings change, not on every keystroke in
+/// the reminder being edited.
+private struct UpcomingAlerts: View, Equatable {
+    let settings: AppSettings
+
+    var body: some View {
+        let next = ReminderScheduler.plan(settings, days: 14).prefix(8)
+        let format = ZmanFormat(settings)
+        if next.isEmpty {
+            Text("אין התראות בשבועיים הקרובים").foregroundStyle(.secondary)
+        }
+        ForEach(Array(next.enumerated()), id: \.offset) { _, p in
+            HStack {
+                Text(p.title)
+                Spacer()
+                Text(format.localizedDate(p.fire, template: "EEEdMMM") + " " + format.time(p.fire))
+                    .monospacedDigit().foregroundStyle(.secondary)
+            }
+            .font(.callout)
+        }
+    }
+}
+
+/// Reminders are system notifications: when they're turned off for the app, say so (nothing would show).
+private struct NotificationsOffWarning: View {
+    @ViewState private var denied = false
+
+    var body: some View {
+        Group {
+            if denied {
+                HStack {
+                    Text("ההתראות של זמנים כבויות בהגדרות המערכת, ולכן התזכורות לא יופיעו.")
+                        .font(.callout).foregroundStyle(.red)
+                    Spacer()
+                    Button("פתיחת הגדרות ההתראות") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.myzman.mac")!)
+                    }
+                }
+            }
+        }
+        .task { await refresh() }
+        // Back from System Settings.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await refresh() }
+        }
+    }
+
+    private func refresh() async {
+        let wasDenied = denied
+        denied = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .denied
+        // Turned on just now: schedule what couldn't be scheduled while they were off.
+        if wasDenied, !denied { ReminderScheduler.shared.reschedule(AppModel.shared.settings) }
+    }
+}
+
 private struct ReminderSettings: View {
     @EnvironmentObject var model: AppModel
     @ViewState private var draft = Reminder(kind: .zman)
@@ -625,6 +751,7 @@ private struct ReminderSettings: View {
         let s = model.settings
         Form {
             Section("התזכורות שלי") {
+                if !s.reminders.isEmpty { NotificationsOffWarning() }
                 if s.reminders.isEmpty {
                     Text("אין תזכורות").foregroundStyle(.secondary)
                 }
@@ -704,7 +831,8 @@ private struct ReminderSettings: View {
                 }
                 }
 
-                TextField("כותרת (לא חובה)", text: $draft.label)
+                // A prompt, so the field shows it's there to type in (a grouped form draws it with no border).
+                TextField("כותרת (לא חובה)", text: $draft.label, prompt: Text("למשל: שיעור דף יומי"))
 
                 HStack {
                     if editingID != nil { Button("ביטול") { reset() } }
@@ -719,19 +847,7 @@ private struct ReminderSettings: View {
             }
 
             Section("ההתראות הקרובות") {
-                let next = ReminderScheduler.plan(s, days: 14).prefix(8)
-                if next.isEmpty {
-                    Text("אין התראות בשבועיים הקרובים").foregroundStyle(.secondary)
-                }
-                ForEach(Array(next.enumerated()), id: \.offset) { _, p in
-                    HStack {
-                        Text(p.title)
-                        Spacer()
-                        Text(model.format.localizedDate(p.fire, template: "EEEdMMM") + " " + model.format.time(p.fire))
-                            .monospacedDigit().foregroundStyle(.secondary)
-                    }
-                    .font(.callout)
-                }
+                UpcomingAlerts(settings: s).equatable()
                 Text("התזכורות מוצגות כהתראות מערכת לפי המיקום הנבחר. הן נקבעות לשבועיים קדימה ומתחדשות כל יום כשהאפליקציה רצה (מומלץ להשאיר את ההפעלה עם הכניסה למחשב).")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -832,6 +948,12 @@ private struct CalendarSettings: View {
                 Text("ליומן Google: הוסיפו את חשבון Google בהגדרות המערכת ← חשבונות אינטרנט (עם לוחות שנה), צרו ב-Google לוח בשם „זמנים” ובחרו אותו כאן. המק לא יכול ליצור לוח חדש בחשבון Google. האפליקציה מוחקת ומעדכנת רק אירועים שהיא עצמה יצרה.")
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("סנכרן אוטומטית (מתעדכן כל יום)", isOn: o.enabled)
+                    .onChange(of: model.settings.calendarSync.enabled) {
+                        // The automatic sync doesn't ask for access: turning it on does (and writes right away).
+                        if model.settings.calendarSync.enabled, !sync.hasAccess {
+                            run { try await sync.sync(model.settings, options: model.settings.calendarSync) }
+                        }
+                    }
                 Stepper("ימים קדימה: \(model.settings.calendarSync.daysAhead)", value: o.daysAhead, in: 7...365, step: 7)
                 Toggle("תאריך עברי (אירוע של יום שלם)", isOn: o.includeHebrewDate)
                 Toggle("חגים, ראש חודש, ספירת העומר ופרשת השבוע", isOn: o.includeEvents)

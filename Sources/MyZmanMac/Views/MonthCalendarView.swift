@@ -58,7 +58,8 @@ struct MonthCalendarView: View {
                 Text(greg).font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Menu("מועדים") {
-                    ForEach(upcomingEvents(from: monthStart), id: \.date) { e in
+                    // From the month shown, but not days already past.
+                    ForEach(upcomingEvents(from: max(monthStart, ZmanEngine.gregorian(model.tz).startOfDay(for: Date()))), id: \.date) { e in
                         Button(e.title) { jump(to: e.date) }
                     }
                 }
@@ -107,6 +108,9 @@ struct MonthCalendarView: View {
             .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
             .help("לחיצה – בחירת יום · לחיצה כפולה – זמני היום · גלגלת – מעבר חודש")
         }
+        // The day changed elsewhere (header arrows, "today", the date picker): show its month. A day picked in
+        // the grid is in the month shown, so the grid stays put.
+        .onChange(of: model.selectedDate) { monthOffset = 0 }
     }
 
     private func jump(to date: Date) {

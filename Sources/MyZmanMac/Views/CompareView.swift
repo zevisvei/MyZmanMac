@@ -8,7 +8,7 @@ struct CompareView: View {
     var body: some View {
         let s = model.settings
         let locations = [s.location] + s.compareLocations.filter { $0 != s.location }.prefix(Self.maxOthers)
-        let columns = locations.map { loc in (loc, zmanim(at: loc)) }
+        let columns = locations.map { loc in (loc, model.zmanim(on: model.selectedDate, at: loc), ZmanFormat(settings(at: loc))) }
         let rows = (s.sortByTime ? ZmanEngine.timeOrdered(columns[0].1) : columns[0].1)
             .filter { $0.item.def?.isDuration != true }
 
@@ -23,9 +23,9 @@ struct CompareView: View {
                     ForEach(rows) { row in
                         GridRow {
                             Text(row.item.name).lineLimit(1).font(.callout).layoutPriority(1).help(row.item.name)
-                            ForEach(columns, id: \.0) { loc, zmanim in
-                                Text(ZmanFormat(settings(at: loc)).time(zmanim.first { $0.id == row.id }?.time))
-                                    .monospacedDigit().font(.callout).fixedSize()
+                            ForEach(columns, id: \.0) { _, zmanim, format in
+                                Text(format.time(zmanim.first { $0.id == row.id }?.time))
+                                    .monospacedDigit().font(.callout).lineLimit(1).minimumScaleFactor(0.7)
                                     .gridColumnAlignment(.center)
                             }
                         }
@@ -76,13 +76,5 @@ struct CompareView: View {
         var s = model.settings
         s.location = loc
         return s
-    }
-
-    /// The same calendar day as the one selected, in the other location's own time zone.
-    private func zmanim(at loc: Location) -> [ComputedZman] {
-        let c = ZmanEngine.gregorian(model.tz).dateComponents([.year, .month, .day], from: model.selectedDate)
-        let day = ZmanEngine.gregorian(loc.timeZone)
-            .date(from: DateComponents(year: c.year, month: c.month, day: c.day, hour: 12)) ?? model.selectedDate
-        return ZmanEngine.zmanim(on: day, settings: settings(at: loc))
     }
 }

@@ -288,6 +288,14 @@ struct CalendarSyncOptions: Codable, Hashable {
     /// Calendars to read from; empty = all.
     var readCalendarIDs: [String] = []
 
+    /// The options that change what's written to the calendar (not which calendars are shown).
+    var writtenPart: CalendarSyncOptions {
+        var o = self
+        o.showCalendarEvents = true
+        o.readCalendarIDs = []
+        return o
+    }
+
     init() {}
 
     init(from decoder: Decoder) throws {
@@ -423,10 +431,12 @@ struct AppSettings: Codable, Hashable {
         chanukahAtTzais = (try? c.decode(Bool.self, forKey: .chanukahAtTzais)) ?? d.chanukahAtTzais
         nusach = (try? c.decode(Nusach.self, forKey: .nusach)) ?? d.nusach
         // Favorites and the selected location are stored by value: pick up corrections made to the built-in list since.
-        favoriteLocations = favoriteLocations.map { fav in
-            guard fav.region != .custom else { return fav }
-            return Location.builtIn.first { $0.nameEn == fav.nameEn && $0.nameHe == fav.nameHe } ?? fav
+        func fresh(_ loc: Location) -> Location {
+            guard loc.region != .custom else { return loc }
+            return Location.builtIn.first { $0.nameEn == loc.nameEn && $0.nameHe == loc.nameHe } ?? loc
         }
+        favoriteLocations = favoriteLocations.map(fresh)
+        compareLocations = compareLocations.map(fresh)
         if location.region != .custom,
            let fresh = Location.builtIn.first(where: { $0.nameEn == location.nameEn && $0.nameHe == location.nameHe }) {
             // An imported visible sunrise table is kept by coordinates: move it along with a corrected location.

@@ -5,6 +5,24 @@ import UniformTypeIdentifiers
 @MainActor
 enum Exporter {
     static func exportCSV(from start: Date, to end: Date, settings: AppSettings) {
+        // The file first: the calculation (up to ten years of days) is only done if it's going to be saved.
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = "זמנים - \(settings.location.displayName).csv"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task {
+            let csv = await Task.detached { csvText(from: start, to: end, settings: settings) }.value
+            // UTF-8 BOM so Excel shows the Hebrew correctly.
+            do { try Data(("\u{FEFF}" + csv).utf8).write(to: url) } catch {
+                UserMessage.show("הייצוא נכשל: \(error.localizedDescription)")
+                return
+            }
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+
+    nonisolated static func csvText(from start: Date, to end: Date, settings: AppSettings) -> String {
         let cal = ZmanEngine.gregorian(settings.location.timeZone)
         let fmt = ZmanFormat(settings)
         var rows: [[String]] = [["תאריך", "תאריך עברי", "יום"] + settings.zmanim.map(\.name)]
@@ -19,43 +37,30 @@ enum Exporter {
             rows.append([fmt.gregorianDate(day), info.hebrewDate, info.weekday] + zmanim)
             day = cal.date(byAdding: .day, value: 1, to: day)!
         }
-
-        let csv = rows.map { $0.map(escape).joined(separator: ",") }.joined(separator: "\r\n")
-
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.commaSeparatedText]
-        panel.nameFieldStringValue = "זמנים - \(settings.location.displayName).csv"
-        NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        // UTF-8 BOM so Excel shows the Hebrew correctly.
-        do { try Data(("\u{FEFF}" + csv).utf8).write(to: url) } catch {
-            UserMessage.show("הייצוא נכשל: \(error.localizedDescription)")
-            return
-        }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        return rows.map { $0.map(escape).joined(separator: ",") }.joined(separator: "\r\n")
     }
 
     /// A printable luach: one row per day, the user's zmanim as columns, Shabbos and Yom Tov shaded,
     /// A4 landscape, as many pages as the range needs.
     static func exportPDF(from start: Date, to end: Date, settings: AppSettings) {
-        let days = pdfDays(from: start, to: end, settings: settings)
-        guard !days.isEmpty else { return }
-
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = "לוח זמנים - \(settings.location.displayName).pdf"
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        if writePDF(days, settings: settings, to: url) {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-        } else {
-            UserMessage.show("הייצוא נכשל")
+        Task {
+            let days = await Task.detached { pdfDays(from: start, to: end, settings: settings) }.value
+            if writePDF(days, settings: settings, to: url) {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } else {
+                UserMessage.show("הייצוא נכשל")
+            }
         }
     }
 
     typealias PDFDay = (info: DayInfo, cells: [String], date: String, notes: String)
 
-    static func pdfDays(from start: Date, to end: Date, settings: AppSettings) -> [PDFDay] {
+    nonisolated static func pdfDays(from start: Date, to end: Date, settings: AppSettings) -> [PDFDay] {
         let cal = ZmanEngine.gregorian(settings.location.timeZone)
         let fmt = ZmanFormat(settings)
         var days: [PDFDay] = []
@@ -159,7 +164,7 @@ enum Exporter {
         return true
     }
 
-    private static func escape(_ s: String) -> String {
+    private nonisolated static func escape(_ s: String) -> String {
         s.contains(where: { ",\"\n".contains($0) }) ? "\"\(s.replacingOccurrences(of: "\"", with: "\"\""))\"" : s
     }
 }

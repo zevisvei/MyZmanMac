@@ -51,8 +51,11 @@ final class CalendarSync: ObservableObject {
     @discardableResult
     func requestAccess() async throws -> Bool {
         let ok = try await store.requestFullAccessToEvents()
-        hasAccess = ok
-        if ok { store.refreshSourcesIfNecessary(); version += 1 }
+        // Only on a change: each bump redraws (and re-queries) every view that shows calendar events.
+        if ok != hasAccess {
+            hasAccess = ok
+            if ok { store.refreshSourcesIfNecessary(); version += 1 }
+        }
         return ok
     }
 
@@ -139,7 +142,9 @@ final class CalendarSync: ObservableObject {
         // instead of rewriting every event each time (slow, and churn for iCloud / Google). Past days are left
         // as they were written.
         var wanted: [String: Item] = [:]
-        for item in events(settings, options: options) { wanted[Self.key(item, tz: tz, alert: options.alertMinutes)] = item }
+        // Up to a year of days: calculated off the main thread.
+        let items = await Task.detached { Self.events(settings, options: options) }.value
+        for item in items { wanted[Self.key(item, tz: tz, alert: options.alertMinutes)] = item }
         var kept = Set<String>()
         var added = 0
         do {
@@ -239,6 +244,7 @@ final class CalendarSync: ObservableObject {
     func add(_ new: NewEvent, calendarID: String?, timeZone: TimeZone) async throws {
         guard try await requestAccess() else { throw Failure.denied }
         try save(new, in: try calendar(for: calendarID), timeZone: timeZone, commit: true)
+        version += 1
     }
 
     /// Adds the same event on a Hebrew date for `years` consecutive years starting at `fromYear`
@@ -264,6 +270,7 @@ final class CalendarSync: ObservableObject {
                 written.append(day)
             }
             try store.commit()
+            version += 1
         } catch {
             store.reset()   // all or nothing: no half the years written by the next commit
             throw error
@@ -321,7 +328,19 @@ final class CalendarSync: ObservableObject {
     /// The user's events between two dates in `tz` (synced zmanim excluded).
     /// All-day events are floating days in the Mac's own zone, so they're matched by calendar day,
     /// and reported starting at that day's midnight in `tz`.
+    /// The views ask on every redraw (each day clicked): the store is queried again only after a change.
+    private var eventsCache: (version: Int, entries: [String: [DayEvent]]) = (0, [:])
+
     func userEvents(from start: Date, to end: Date, tz: TimeZone, options: CalendarSyncOptions) -> [DayEvent] {
+        let key = "\(start.timeIntervalSince1970)|\(end.timeIntervalSince1970)|\(tz.identifier)|\(hasAccess)|\(options.showCalendarEvents)|\(options.readCalendarIDs)"
+        if eventsCache.version != version || eventsCache.entries.count > 100 { eventsCache = (version, [:]) }
+        if let cached = eventsCache.entries[key] { return cached }
+        let events = fetchUserEvents(from: start, to: end, tz: tz, options: options)
+        eventsCache.entries[key] = events
+        return events
+    }
+
+    private func fetchUserEvents(from start: Date, to end: Date, tz: TimeZone, options: CalendarSyncOptions) -> [DayEvent] {
         guard options.showCalendarEvents, let cals = readCalendars(options) else { return [] }
         let loc = ZmanEngine.gregorian(tz)
         let mac = Calendar.current
@@ -383,6 +402,7 @@ final class CalendarSync: ObservableObject {
         guard let ev = store.events(matching: pred).first(where: { $0.calendarItemIdentifier == e.itemID && $0.startDate == e.eventStart })
         else { throw Failure.eventGone }
         try store.remove(ev, span: .thisEvent, commit: true)
+        version += 1
     }
 
     func openInCalendarApp(_ date: Date) {
@@ -400,7 +420,7 @@ final class CalendarSync: ObservableObject {
         var allDay: Bool
     }
 
-    func events(_ settings: AppSettings, options: CalendarSyncOptions, from: Date = Date()) -> [Item] {
+    nonisolated static func events(_ settings: AppSettings, options: CalendarSyncOptions, from: Date = Date()) -> [Item] {
         let tzCal = ZmanEngine.gregorian(settings.location.timeZone)
         var items: [Item] = []
         let chosen = Set(options.zmanIDs)
@@ -443,7 +463,7 @@ final class CalendarSync: ObservableObject {
         panel.nameFieldStringValue = "זמנים - \(settings.location.displayName).ics"
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try Self.ics(settings, items: events(settings, options: options), alertMinutes: options.alertMinutes)
+        try Self.ics(settings, items: Self.events(settings, options: options), alertMinutes: options.alertMinutes)
             .write(to: url, atomically: true, encoding: .utf8)
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }

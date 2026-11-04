@@ -71,7 +71,9 @@ struct WidgetDay {
         cal = ZmanEngine.gregorian(s.location.timeZone)
         let s = s, now = now, cal = cal
         let hebrewDay: Date = {
-            guard s.hebrewDateChangesAtSunset, let ss = ZmanEngine.sunset(on: now, settings: s), now >= ss else { return now }
+            // The rounded sunset, as the timeline's entry for it: the unrounded one is still seconds away then.
+            guard s.hebrewDateChangesAtSunset,
+                  let ss = ZmanEngine.round(ZmanEngine.sunset(on: now, settings: s), .deadline, s), now >= ss else { return now }
             return cal.date(byAdding: .day, value: 1, to: now)!
         }()
         info = ZmanEngine.dayInfo(for: hebrewDay, settings: s)
@@ -131,6 +133,8 @@ struct NextZmanView: View {
                 }
                 .font(.callout.monospacedDigit())
                     .foregroundStyle(.orange)
+            } else {
+                EmptyListNote()
             }
             if family == .systemMedium {
                 Divider()
@@ -144,6 +148,14 @@ struct NextZmanView: View {
                 }
             }
         }
+    }
+}
+
+/// No (timed) zmanim in the user's list: nothing else to show but how to add some.
+private struct EmptyListNote: View {
+    var body: some View {
+        Text("אין זמנים ברשימה. הוסיפו זמנים באפליקציה: הגדרות ← זמנים.")
+            .font(.caption).foregroundStyle(.secondary)
     }
 }
 
@@ -193,13 +205,15 @@ struct ZmanimListView: View {
                 Spacer()
                 Text(day.s.location.displayName).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
+            if rows.isEmpty { EmptyListNote() }
             if family == .systemLarge, !day.info.parsha.isEmpty {
                 Text(([day.info.parsha] + day.info.events).joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Divider()
             ForEach(rows) { z in
-                let past = (z.time ?? .distantFuture) < day.now
+                // At the zman's own entry it has passed (the next one is already "next").
+                let past = (z.time ?? .distantFuture) <= day.now
                 let isNext = z.id == next?.id && z.time == next?.time
                 HStack {
                     Text(z.item.name).lineLimit(1)

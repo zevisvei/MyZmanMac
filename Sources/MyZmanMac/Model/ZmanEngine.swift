@@ -34,12 +34,19 @@ enum Disclaimer {
 }
 
 enum ZmanEngine {
+    /// Built once per zone: it's asked for many times a second (each tick, each day cell of the month grid).
     static func gregorian(_ tz: TimeZone) -> Calendar {
+        calendarLock.lock()
+        defer { calendarLock.unlock() }
+        if let cal = calendars[tz.identifier] { return cal }
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = tz
         cal.locale = Locale(identifier: "he_IL")
+        calendars[tz.identifier] = cal
         return cal
     }
+    private static let calendarLock = NSLock()
+    nonisolated(unsafe) private static var calendars: [String: Calendar] = [:]
 
     /// Noon of the given day in the location's time zone, so the calculations land on the right civil day.
     static func noon(of day: Date, in tz: TimeZone) -> Date {

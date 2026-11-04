@@ -71,7 +71,7 @@ private struct SpecialTimesCard: View {
         if !times.isEmpty {
             VStack(spacing: 3) {
                 ForEach(times) { t in
-                    let past = isToday && (t.time ?? .distantFuture) < now
+                    let past = isToday && (t.time ?? .distantFuture) <= now
                     HStack(spacing: 6) {
                         Image(systemName: t.symbol).frame(width: 16).foregroundStyle(.orange)
                         Text(t.title).fontWeight(.medium)
@@ -107,7 +107,7 @@ private struct ZmanRow: View {
         let past: Bool = switch day {
         case .past: true
         case .future: false
-        case .today: z.time.map { $0 < now } ?? false
+        case .today: z.time.map { $0 <= now } ?? false
         }
 
         VStack(alignment: .leading, spacing: 4) {

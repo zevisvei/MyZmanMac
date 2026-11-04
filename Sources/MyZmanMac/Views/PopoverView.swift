@@ -36,6 +36,8 @@ struct PopoverView: View {
             }
             .frame(maxHeight: .infinity, alignment: .top)
 
+            UpdateBanner()
+
             Text("⚠︎ " + Disclaimer.short)
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
@@ -57,6 +59,43 @@ struct PopoverView: View {
         // another app.
         AppWindows.showSettings()
         StatusBarController.shared.closePopover()
+    }
+}
+
+/// A newer version, offered at the bottom of the popover until it's installed or dismissed.
+private struct UpdateBanner: View {
+    @ObservedObject private var updater = Updater.shared
+
+    var body: some View {
+        if let r = updater.offered {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.circle.fill").foregroundStyle(.tint)
+                Text("גרסה \(r.version) זמינה")
+                Spacer()
+                Button("עדכן") { Task { await updater.install(r) } }
+                    .controlSize(.small)
+                Button { updater.skip(r) } label: { Label("לא עכשיו", systemImage: "xmark").labelStyle(.iconOnly) }
+                    .buttonStyle(.borderless)
+                    .help("דלג על גרסה זו")
+            }
+            .font(.callout)
+            .padding(8)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        } else if case .installFailed(_, let message) = updater.state {
+            HStack(spacing: 8) {
+                Text(message).foregroundStyle(.red)
+                Link("להורדה", destination: Updater.releasesPage)
+                Button { updater.dismissFailure() } label: { Label("סגור", systemImage: "xmark").labelStyle(.iconOnly) }
+                    .buttonStyle(.borderless)
+            }
+            .font(.caption)
+        } else if updater.state == .installing {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("מתקין את העדכון…")
+            }
+            .font(.callout)
+        }
     }
 }
 
@@ -107,7 +146,6 @@ struct DayHeader: View {
     var body: some View {
         let isToday = model.isToday(date)
         let info = model.dayInfo(date)
-        let cal = ZmanEngine.gregorian(model.tz)
 
         VStack(spacing: 6) {
             HStack {
@@ -144,7 +182,9 @@ struct DayHeader: View {
             HStack(spacing: 12) {
                 LearningButton(date: date, info: info)
                 if model.settings.showYerushalmi, !info.yerushalmi.isEmpty {
+                    // Gives way first when "back to today" also needs room.
                     Text("ירושלמי: \(info.yerushalmi)").font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.tail).layoutPriority(-1)
                 }
                 Spacer()
                 if !isToday {
@@ -205,7 +245,7 @@ private struct LearningButton: View {
         let s = model.settings
         var out: [(String, String)] = []
         if !info.dafYomi.isEmpty { out.append(("דף יומי", info.dafYomi)) }
-        if !info.yerushalmi.isEmpty { out.append(("ירושלמי", info.yerushalmi)) }
+        if s.showYerushalmi, !info.yerushalmi.isEmpty { out.append(("ירושלמי", info.yerushalmi)) }
         let cal = ZmanEngine.gregorian(model.tz)
         for c in s.learning {
             let text = DailyLearning.portion(c, on: date, calendar: cal)

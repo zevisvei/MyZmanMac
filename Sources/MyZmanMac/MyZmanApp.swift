@@ -71,7 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { DebugDump.preview(tab: CommandLine.arguments.dropFirst(i + 1).first) }
             return
         }
-        MainActor.assumeIsolated { StatusBarController.shared.start() }
+        MainActor.assumeIsolated {
+            StatusBarController.shared.start()
+            Updater.shared.start()
+        }
         // Without a status item nothing would show that the app opened, unless it started with the Mac.
         let event = NSAppleEventManager.shared().currentAppleEvent
         let atLogin = event?.eventID == kAEOpenApplication
@@ -89,7 +92,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// myzman://open, from clicking a widget.
     func application(_ application: NSApplication, open urls: [URL]) {
-        MainActor.assumeIsolated { AppWindows.showApp() }
+        MainActor.assumeIsolated {
+            if !StatusBarController.shared.widgetClicked() { AppWindows.showApp() }
+        }
     }
 }
 

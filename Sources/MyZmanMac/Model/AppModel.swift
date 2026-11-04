@@ -1,3 +1,4 @@
+import EventKit
 import Foundation
 import Combine
 import SwiftUI
@@ -39,7 +40,8 @@ final class AppModel: ObservableObject {
                 // Don't leave stale synced zmanim in a calendar we no longer write to.
                 Task { try? await CalendarSync.shared.removeSynced(options: old) }
             }
-            if new != old || timesChanged {
+            // Not for the options that only choose which of the user's calendars to show.
+            if new.writtenPart != old.writtenPart || timesChanged {
                 syncCalendarIfEnabled()
             }
         }
@@ -137,8 +139,10 @@ final class AppModel: ObservableObject {
     private func invalidate() {
         // Every cached value depends on some setting (a custom location's elevation or time zone too).
         todayCache = nil
+        sunsetCache = nil
         infoCache.removeAll()
         specialCache.removeAll()
+        compareCache.removeAll()
         tick()
     }
 
@@ -153,6 +157,10 @@ final class AppModel: ObservableObject {
             if sameZone, tz.identifier + "|" + dayKey(selectedDate) == lastDayKey { selectedDate = date }
             lastDayKey = key
             todayCache = nil
+            // One-time reminders whose day is over have done their job.
+            let startOfToday = ZmanEngine.gregorian(tz).startOfDay(for: date)
+            let expired: (Reminder) -> Bool = { $0.repeatMode == .once && ($0.onceDate.map { $0 < startOfToday } ?? false) }
+            if settings.reminders.contains(where: expired) { settings.reminders.removeAll(where: expired) }
             ReminderScheduler.shared.reschedule(settings)
             syncCalendarIfEnabled()
         }
@@ -180,7 +188,7 @@ final class AppModel: ObservableObject {
                 if (within == 0 || t.timeIntervalSince(date) <= within), settings.showSeconds { ticks.everySecond = true }
             }
         }
-        if mb.showHebrewDate, settings.hebrewDateChangesAtSunset, let sunset = ZmanEngine.sunset(on: date, settings: settings) {
+        if mb.showHebrewDate, settings.hebrewDateChangesAtSunset, let sunset = todaySunset(date) {
             ticks.changes.append(sunset)
         }
         // A hair after the boundary, so the new value is already current when we look.
@@ -233,8 +241,19 @@ final class AppModel: ObservableObject {
     /// The Hebrew day, rolled to tomorrow after sunset if the user wants that.
     func currentHebrewDay(at date: Date) -> Date {
         guard settings.hebrewDateChangesAtSunset,
-              let sunset = ZmanEngine.sunset(on: date, settings: settings), date >= sunset else { return date }
+              let sunset = todaySunset(date), date >= sunset else { return date }
         return ZmanEngine.gregorian(tz).date(byAdding: .day, value: 1, to: date)!
+    }
+
+    private var sunsetCache: (key: String, sunset: Date?)?
+
+    /// The sunset of the given day, kept for the day: it's asked for on every tick.
+    private func todaySunset(_ date: Date) -> Date? {
+        let key = dayKey(date)
+        if let c = sunsetCache, c.key == key { return c.sunset }
+        let sunset = ZmanEngine.sunset(on: date, settings: settings)
+        sunsetCache = (key, sunset)
+        return sunset
     }
 
     private var infoCache: [String: DayInfo] = [:]
@@ -246,6 +265,23 @@ final class AppModel: ObservableObject {
         let i = ZmanEngine.dayInfo(for: d, settings: settings)
         infoCache[key] = i
         return i
+    }
+
+    private var compareCache: [String: [ComputedZman]] = [:]
+
+    /// The zmanim of the same calendar day as `d` at another location, in its own time zone (the compare tab).
+    func zmanim(on d: Date, at loc: Location) -> [ComputedZman] {
+        let key = dayKey(d) + "|\(loc.id)"
+        if let z = compareCache[key] { return z }
+        if compareCache.count > 200 { compareCache.removeAll() }
+        let c = ZmanEngine.gregorian(tz).dateComponents([.year, .month, .day], from: d)
+        let day = ZmanEngine.gregorian(loc.timeZone)
+            .date(from: DateComponents(year: c.year, month: c.month, day: c.day, hour: 12)) ?? d
+        var s = settings
+        s.location = loc
+        let z = ZmanEngine.zmanim(on: day, settings: s)
+        compareCache[key] = z
+        return z
     }
 
     private var specialCache: [String: [SpecialTime]] = [:]
@@ -295,7 +331,8 @@ final class AppModel: ObservableObject {
     /// Debounced, so flipping several options in a row rewrites the calendar once.
     func syncCalendarIfEnabled() {
         syncWork?.cancel()
-        guard settings.calendarSync.enabled else { return }
+        // Automatic: never brings up the permission prompt (e.g. at midnight); that's for the sync button.
+        guard settings.calendarSync.enabled, EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             let s = self.settings
